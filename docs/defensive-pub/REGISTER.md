@@ -10,7 +10,7 @@ Only `published` establishes prior art. Everything else protects nothing.
 
 | ID | Mechanism | Priority | Status | Venue | Pub #/DOI | Date | Timestamp anchor | Evidence |
 |----|-----------|----------|--------|-------|-----------|------|------------------|----------|
-| DP-001 | Metadata-as-AAD binding (non-strippable, non-downgradeable) | ★ | **submitted** | TDCommons — Defensive Publications Series | pending | submitted 2026-08-15 | `docs/defensive-pub/anchors/SPEC.md.ots` — **Bitcoin-confirmed** (blocks 958650, 958690) | `evidence/dp-001/` |
+| DP-001 | Metadata-as-AAD binding (non-strippable, non-downgradeable) | ★ | **submitted** | TDCommons — Defensive Publications Series | MS **#12742** (submission no.; DOI pending) | submitted 2026-08-15 | `docs/defensive-pub/anchors/SPEC.md.ots` — **Bitcoin-confirmed** (blocks 958650, 958690) | `evidence/dp-001/` |
 
 ## Backlog — drafted from the guide's §6 inventory
 

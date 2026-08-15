@@ -1,9 +1,27 @@
 # DP-001 — submitted to Technical Disclosure Commons, 2026-08-15
 
-**Status: submitted, awaiting editorial approval.** Not yet published. TDCommons states
-submissions are "typically approved and posted within one business day"; their Author FAQ
-gives up to 72 hours where revisions are requested. A confirmation e-mail goes to
-`dbrown@enthropicdata.com`.
+**Submission number: MS #12742.** Status page:
+`https://www.tdcommons.org/cgi/preview.cgi?article=12742&context=dpubs_series`
+
+**Status: submitted and revised, awaiting editorial approval.** Not yet published.
+TDCommons states submissions are "typically approved and posted within one business day";
+their Author FAQ gives up to 72 hours where revisions are requested.
+
+> **#12742 is a submission number, not a publication identifier.** Cite it for
+> correspondence with the editors. The citable publication number / DOI is assigned when
+> the disclosure actually posts, and only that belongs in a prior-art citation.
+
+## Revision history
+
+| When | Event |
+|---|---|
+| 2026-08-15 | Initial submission. The file uploaded was the repository's working copy, which still carried the internal pre-filing checklist — including a heading reading "remove before filing", an unticked "Submission date — fill in", and internal process notes. |
+| 2026-08-15 | **Replaced**, reason given to the editors: *"Removed internal use checklist."* The file now on record is the clean 8-page PDF whose digest is below. |
+
+The underlying cause is fixed rather than papered over: the checklist no longer lives in
+the submission document at all. It moved to `../DP-001-prefiling-checklist.md`, and
+`../DP-001-tdcommons-submission.md` is byte-identical to the filed artifact — so uploading
+straight from the repository can no longer reproduce this.
 
 | Field | Value as submitted |
 |---|---|
@@ -40,8 +58,8 @@ availability from 2026-08-15. This is a third, independent witness to the same d
 
 ## On acceptance — do this
 
-1. Record the publication number / DOI in `../REGISTER.md`, and change DP-001's status
-   there from `draft` to `published`.
+1. Record the publication number / DOI in `../REGISTER.md` (replacing the MS #12742
+   placeholder), and change DP-001's status there from `submitted` to `published`.
 2. Save the confirmation e-mail and the published URL into this directory.
 3. Only then is DP-001 prior art in the form an examiner encounters. Until the approval
    lands, this directory records a **submission**, not a publication — the distinction the
