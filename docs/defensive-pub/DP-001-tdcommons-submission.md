@@ -1,26 +1,44 @@
 # DEFENSIVE PUBLICATION — DP-001
 
-**Title:** Tamper-Evident, Non-Downgradeable Binding of Advisory Header Metadata to Ciphertext in Client-Side-Encrypted Document Envelopes via AES-GCM Additional Authenticated Data
+**Title:** Tamper-Evident, Non-Downgradeable Binding of Advisory Header Metadata to Ciphertext in Client-Side-Encrypted Document Envelopes via AES-GCM Additional Authenticated Data  
 
-**Author:** David Brown
-**Assignee / Defensive Publisher:** Enthropic Data LLC, Weddington, North Carolina, USA
-**Intended venue:** Technical Disclosure Commons (TDCommons.org)
-**Submission date:** [DATE OF SUBMISSION]
+**Author:** David Brown  
+**Assignee / Defensive Publisher:** Enthropic Data LLC, Weddington, North Carolina, USA  
+**Intended venue:** Technical Disclosure Commons (TDCommons.org)  
+**Submission date:** 2026-08-15  
 **License intent:** CC BY 4.0 (TDCommons default) — maximum reuse is the objective
 
 **Priority-date anchors (independent of this submission):**
 
-| Artifact | SHA-256 | Anchor |
-|---|---|---|
-| `docs/SPEC.md` | `2e1ac039bfb1920bc5ba848f2bfdf904e0c9ccfe0443c016034a6eb5bc7c6c41` | OpenTimestamps `docs/defensive-pub/anchors/SPEC.md.ots`, stamped 2026-07-18, Bitcoin-confirmed in blocks 958650 and 958690 |
-| `cell-crypto.js` (reference implementation) | `11ce4b07f2459ea1b4677d98e864a424849afd7080cafdfdff60ca7b81decae5` | OpenTimestamps `docs/defensive-pub/anchors/cell-crypto.js.ots`, stamped 2026-07-18, Bitcoin-confirmed in blocks 958650 and 958690 |
+**`docs/SPEC.md`** — SHA-256:
+
+```
+2e1ac039bfb1920bc5ba848f2bfdf904e0c9ccfe0443c016034a6eb5bc7c6c41
+```
+
+Anchored by OpenTimestamps (`docs/defensive-pub/anchors/SPEC.md.ots`), stamped 2026-07-18,
+Bitcoin-confirmed in blocks 958650 and 958690.
+
+**`cell-crypto.js`** (reference implementation) — SHA-256:
+
+```
+11ce4b07f2459ea1b4677d98e864a424849afd7080cafdfdff60ca7b81decae5
+```
+
+Anchored by OpenTimestamps (`docs/defensive-pub/anchors/cell-crypto.js.ots`), stamped
+2026-07-18, Bitcoin-confirmed in blocks 958650 and 958690.
 
 The anchored bytes themselves sit beside their proofs in `docs/defensive-pub/anchors/`,
 so both digests above can be reproduced without a repository checkout. The files at the
 paths `docs/SPEC.md` and `cell-crypto.js` have since advanced to v1.3 and hash
 differently; they carry their own, later anchor.
 
-Public repository: **`github.com/Enthropic-Data-LLC/cd-vanilla-public`** (published 2026-08-15).
+Public repository, published 2026-08-15:
+
+```
+https://github.com/Enthropic-Data-LLC/cd-vanilla-public
+```
+
 The anchored bytes and their proofs are in `docs/defensive-pub/anchors/`; the originating tag
 `cell-format-v1.2-defensive-pub` (commit `62a8143`) is in the private source repository and is
 not needed — the proofs commit to file content, not to git history.
@@ -77,11 +95,23 @@ Canonicalization is specified as:
 
 ```
 canonicalize(v):
-  if v is null or not an object:  return json_encode(v)
-  if v is an array:               return "[" + join(",", [canonicalize(e if e is defined else null) for e in v]) + "]"
+
+  if v is null or not an object:
+      return json_encode(v)
+
+  if v is an array:
+      return "["
+           + join(",", [ canonicalize(e if e is defined else null)
+                         for e in v ])
+           + "]"
+
   otherwise (object):
-      keys = sort([k for k in keys(v) if v[k] is defined])     // lexicographic
-      return "{" + join(",", [json_encode(k) + ":" + canonicalize(v[k]) for k in keys]) + "}"
+      // keys sorted lexicographically; undefined values omitted
+      keys = sort([ k for k in keys(v) if v[k] is defined ])
+      return "{"
+           + join(",", [ json_encode(k) + ":" + canonicalize(v[k])
+                         for k in keys ])
+           + "}"
 ```
 
 Canonicalization ensures that re-serializing the envelope — pretty-printing it, or round-tripping it through a JSON library that reorders keys — does not alter the authenticated bytes and therefore does not produce a spurious authentication failure on an otherwise-untampered document.
@@ -208,7 +238,9 @@ A minimal envelope encrypted for a single recipient, no quorum, permanent lifeti
 }
 ```
 
-For this envelope the AAD is the UTF-8 encoding of:
+For this envelope the AAD is the UTF-8 encoding of the following single line. Any line
+breaks below are introduced by page width alone: the canonical form contains **no
+whitespace whatsoever**, and inserting any would change the authenticated bytes.
 
 ```
 [null,{"of_total":1,"required":1},{"expires_at":null,"minimum_atl":1,"on_expiry":"none","single_use":false,"type":"permanent"},{"copy_protection":"standard","created_on_origin":"https://example.invalid","origin_sig":null,"watermark_mode":"none"}]
@@ -232,22 +264,6 @@ A complete, independently runnable reference implementation of the disclosed mec
 The implementation uses only the W3C Web Cryptography API and no third-party cryptographic libraries.
 
 ---
-
-## Submission Checklist (remove before filing)
-
-- [x] **Author names** — TDCommons requires real named individual authors. David Brown, sole author, confirmed 2026-08-13.
-- [x] **Assignee confirmation** — Enthropic Data LLC confirmed as the publishing entity, 2026-08-13. Partner agreement to publication is assumed on that confirmation; if any partner has not been asked, ask before filing.
-- [x] **Repository is public** — **done 2026-08-15.** The Reference Implementation section cites `github.com/Enthropic-Data-LLC/cd-vanilla-public`, verified reachable anonymously, with both anchored files re-hashed from the published copies to their recorded digests. The enablement claim now rests on a repository any reader can open.
-- [x] **Confirm no secrets** — this document contains no keys, credentials, or customer data. Re-verify after any edit.
-      Whole-repository scan 2026-08-14, working tree and all 87 commits of history: no private keys,
-      API tokens, JWTs or credentialed connection strings. The demonstration cells in
-      `docs/figure-data/` carry public keys, salts and ciphertext only, which is the format working as
-      designed. One finding, since resolved: the pre-redaction copy of a book screenshot
-      (`64-audit.png`) remained in history at two revisions and exposed internal LAN addresses in the
-      audit-log IP column. That history was rewritten the same day — see the note in
-      `docs/defensive-pub/REGISTER.md`.
-- [ ] **Submission date** — fill in.
-- [ ] After acceptance: record the DOI / publication number in `docs/defensive-pub/REGISTER.md` and save the confirmation into `docs/defensive-pub/evidence/dp-001/`.
 
 ---
 
