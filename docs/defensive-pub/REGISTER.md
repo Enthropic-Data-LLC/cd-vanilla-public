@@ -10,7 +10,7 @@ Only `published` establishes prior art. Everything else protects nothing.
 
 | ID | Mechanism | Priority | Status | Venue | Pub #/DOI | Date | Timestamp anchor | Evidence |
 |----|-----------|----------|--------|-------|-----------|------|------------------|----------|
-| DP-001 | Metadata-as-AAD binding (non-strippable, non-downgradeable) | ★ | **submitted** | TDCommons — Defensive Publications Series | MS **#12742** (submission no.; DOI pending) | submitted 2026-08-15 | `docs/defensive-pub/anchors/SPEC.md.ots` — **Bitcoin-confirmed** (blocks 958650, 958690) | `evidence/dp-001/` |
+| DP-001 | Metadata-as-AAD binding (non-strippable, non-downgradeable) | ★ | **published** | TDCommons — Defensive Publications Series | **No. 11391** — https://www.tdcommons.org/dpubs_series/11391 (no DOI minted; the series no. is the citable id. MS #12742 was the submission no., for correspondence only) | **published 2026-08-17** | `docs/defensive-pub/anchors/SPEC.md.ots` — **Bitcoin-confirmed** (blocks 958650, 958690) | `evidence/dp-001/` |
 
 ## Backlog — drafted from the guide's §6 inventory
 
@@ -154,9 +154,23 @@ staying online — identifiers and caveats in [`evidence/README.md`](evidence/RE
 | `cell-crypto.js` content | `swh:1:cnt:9ca50b405ce218a158d2ce7f2ec517bfc331389f` |
 | Wayback Machine | snapshots `20260815124807` / `…4813` / `…4819` — the stored `SPEC.md` and `cell-crypto.js` were re-downloaded and **hash to their anchored digests** |
 
-> **Still outstanding — a date is not a filing.** No venue submission has been made; DP-001
-> remains `draft`. Steps 1–3 of the publishing guide's §5 anchoring stack are complete
-> (timestamp, signed tag, independent archive); **step 4 is not**. Publishing and archiving
-> closed the availability gap; neither places the disclosure where an examiner searches.
-> See §4 of `docs/DEFENSIVE-PUBLISHING-GUIDE.md` for the venue ranking — TDCommons is the
-> recommended free primary, and DP-001 is already drafted for it.
+> **Venue filing — CLOSED 2026-08-17.** DP-001 is **published**: Technical Disclosure
+> Commons, Defensive Publications Series **No. 11391**, 2026-08-17, CC BY 4.0, author
+> David Lee Brown — <https://www.tdcommons.org/dpubs_series/11391>. Step 4 of the publishing guide's §5 anchoring stack is now
+> complete alongside steps 1–3 (timestamp, signed tag, independent archive). The disclosure
+> now sits where an examiner searches, which anchoring and a public repo could not do on
+> their own.
+>
+> Recommended citation:
+>
+> > Brown, David Lee, "Tamper-Evident, Non-Downgradeable Binding of Advisory Header Metadata
+> > to Ciphertext in Client-Side-Encrypted Document Envelopes via AES-GCM Additional
+> > Authenticated Data", Technical Disclosure Commons, (August 17, 2026).
+> > https://www.tdcommons.org/dpubs_series/11391
+>
+> **Three dates, three separate claims — do not collapse them.** Existence from the OTS
+> anchors (2026-07-18 v1.2 / 2026-08-09 v1.3); public availability from the repository
+> (2026-08-15); indexed venue publication from TDCommons (2026-08-17). DP-001 covers the
+> metadata-as-AAD binding only. **The remaining backlog rows below are still unpublished
+> and protect nothing** — DP-009, the full-format master disclosure, is the significant one
+> and its venue is still undecided.
