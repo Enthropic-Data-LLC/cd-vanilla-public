@@ -28,3 +28,6 @@ __pycache__/
 .eggs/
 build/
 dist/
+
+# Rust
+impl/rust/target/

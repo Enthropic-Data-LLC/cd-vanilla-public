@@ -1,0 +1,36 @@
+[package]
+name = "cellular-defense"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Rust implementation of the Cellular Defense .cell encrypted document format (spec v1.3)"
+license = "Apache-2.0"
+keywords = ["encryption", "cell", "aes-gcm", "ecdh", "shamir"]
+categories = ["cryptography"]
+
+[dependencies]
+aes-gcm = "0.10"
+aes-kw = "0.2"
+p256 = { version = "0.13", features = ["ecdh", "ecdsa", "pkcs8"] }
+pkcs8 = { version = "0.10", features = ["alloc"] }
+hkdf = "0.12"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+flate2 = "1"
+rand_core = { version = "0.6", features = ["getrandom"] }
+# preserve_order keeps object key insertion order, which v1.0/v1.1 header
+# hashing requires: those versions hash the header as JSON.stringify wrote it.
+#
+# float_roundtrip is NOT optional here. serde_json's default float parser is a
+# fast path that is not correctly rounded, and it lands one ULP away from the
+# true value on a meaningful fraction of literals with large exponents — where
+# JavaScript, and Rust's own str::parse, are exact. That produces a different
+# f64, hence a different canonical string, hence a header_hash that never
+# matches, with nothing to indicate why.
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+sha2 = "0.10"
