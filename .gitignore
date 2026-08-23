@@ -31,3 +31,6 @@ dist/
 
 # Rust
 impl/rust/target/
+
+# Java
+impl/java/target/
