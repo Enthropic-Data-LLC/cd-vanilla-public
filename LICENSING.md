@@ -71,7 +71,17 @@ The AGPL in [`LICENSE`](LICENSE) continues to cover `cell-crypto.js`,
 licenses in one repository is a thing to be explicit about rather than clever
 about: **if a file is under `impl/python/` or `conformance/`, it is Apache-2.0;
 otherwise it is AGPL-3.0.** Every source file carries an `SPDX-License-Identifier`
-line stating which.
+line stating which, and **where a file's SPDX line differs from the positional
+rule, the SPDX line governs.**
+
+There is exactly one such file today:
+[`impl/python/tests/interop/js_bridge.mjs`](impl/python/tests/interop/js_bridge.mjs)
+is **AGPL-3.0-only**, because it loads `cell-crypto.js` in order to run cells
+through the reference implementation. It is a test harness, it is needed only to
+run the differential tests, and nothing in the Python library imports it — so the
+Apache grant over `impl/python/` is unaffected by it. It is called out here
+rather than quietly filed under the directory rule, because a licence you have
+to infer from a directory path is a licence somebody gets wrong.
 
 ## 4. Commercial licensing
 
