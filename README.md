@@ -48,6 +48,7 @@ tools/verify-cell.py — independent verifier, written from SPEC.md, no project 
 
 impl/python/        — second implementation, in Python (Apache-2.0, pip-installable)
 impl/go/            — third implementation, in Go (Apache-2.0, zero dependencies)
+impl/rust/          — fourth implementation, in Rust (Apache-2.0, RustCrypto)
 conformance/        — shared test keys and .cell vectors for ANY implementation
 ```
 
@@ -70,6 +71,7 @@ http://localhost:8080/tests/test.html
 ```bash
 cd impl/python && python3 -m unittest discover -s tests -t .    # 106 tests
 cd impl/go     && go test ./...                                 # needs Go 1.24+
+cd impl/rust   && cargo test --release                          # needs Rust 1.85+
 ```
 
 Three things run there, and the middle one is the reason the directory exists:
@@ -86,7 +88,7 @@ Three things run there, and the middle one is the reason the directory exists:
   downgrade, DER-encoded signature, short quorum, expired retention; plus 225
   canonical-serialization vectors taken from `cell-crypto.js` itself.
 
-All three implementations agree on all of them, and cells cross between them in
+All four implementations agree on all of them, and cells cross between them in
 every direction. Node is needed only for the differential tests, which skip
 cleanly without it.
 
