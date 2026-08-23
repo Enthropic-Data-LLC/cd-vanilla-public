@@ -14,34 +14,114 @@ Apache-2.0, like the rest of `impl/` — see [`LICENSING.md`](../../LICENSING.md
 go get github.com/Enthropic-Data-LLC/cd-vanilla-public/impl/go/cell
 ```
 
-## Library
+## Encrypt
 
 ```go
-alice, _ := cell.GenerateKey("Alice")
-bob, _   := cell.GenerateKey("Bob")
+import (
+    "os"
+    "github.com/Enthropic-Data-LLC/cd-vanilla-public/impl/go/cell"
+)
 
-sealed, _ := cell.Create([]byte("quarterly numbers"), "q3.txt",
-    []cell.Recipient{cell.KeyRecipient(alice), cell.KeyRecipient(bob)},
+// The recipient's public key. They generated it with `cdcell keygen` and sent
+// you the .cdpub; you never see their private key.
+pub, _ := os.ReadFile("alice.cdpub")
+alice, err := cell.ParseCDPub(pub)
+
+// Your own key, used to sign the header so Alice can confirm you sealed it.
+priv, _ := os.ReadFile("me.cdkey")
+me, err := cell.ParseCDKey(priv)
+
+data, _ := os.ReadFile("q3-results.pdf")
+sealed, err := cell.Create(data, "q3-results.pdf",
+    []cell.Recipient{cell.KeyRecipient(alice)},
     cell.CreateOptions{
-        Threshold: 2,                        // 2-of-2 Shamir quorum
-        Sender:    alice,                    // adds an ECDSA header signature
-        Meta:      map[string]any{"case": "2026-0417"}, // inside the ciphertext
+        ContentType: "application/pdf",
+        Sender:      me,                                     // optional signature
+        Meta:        map[string]any{"case": "2026-0417"},    // INSIDE the ciphertext
     })
 
-_, err := cell.Verify(sealed, "")            // audit chain — no key material needed
-
-result, _ := cell.Open(sealed, cell.OpenOptions{
-    Keys:           []*cell.KeyRecord{alice, bob},
-    ExpectedSigner: alice.Fingerprint(),     // authorship, checked against a known key
-})
-result.Data // []byte("quarterly numbers")
+encoded, err := cell.MarshalCell(sealed)
+os.WriteFile("q3-results.cell", encoded, 0o644)
 ```
 
-Errors are sentinel values, comparable with `errors.Is`: `ErrIntegrity`,
-`ErrSignature`, `ErrDecryption`, `ErrNoMatchingKey`, `ErrQuorumNotMet`,
-`ErrLifetime`, `ErrUnsupportedVersion`, `ErrMalformed`. The distinctions matter
-— "this cell was tampered with" and "you gave me the wrong key" call for
-different responses.
+The filename, media type, size and `Meta` are all encrypted: an observer of the
+stored cell sees none of them (§5).
+
+**Several recipients, any one of whom can open it:**
+
+```go
+recipients := []cell.Recipient{
+    cell.KeyRecipient(alice),
+    cell.KeyRecipient(bob),
+    cell.PassphraseRecipient("break glass in emergency", ""),
+}
+sealed, err := cell.Create(data, "q3-results.pdf", recipients, cell.CreateOptions{})
+```
+
+**A quorum — two of the three together, and no fewer:**
+
+```go
+sealed, err := cell.Create(data, "q3-results.pdf", recipients,
+    cell.CreateOptions{Threshold: 2})   // Shamir split over GF(256), §7
+```
+
+## Decrypt
+
+```go
+priv, _ := os.ReadFile("me.cdkey")
+me, err := cell.ParseCDKey(priv)
+
+encoded, _ := os.ReadFile("q3-results.cell")
+parsed, err := cell.ParseCell(encoded)
+
+result, err := cell.Open(parsed, cell.OpenOptions{
+    Keys: []*cell.KeyRecord{me},
+    // Optional but recommended: a fingerprint you learned out of band. Without
+    // it, "opened without error" is NOT evidence of who sealed the cell — a
+    // signature can be stripped undetectably (§4.1).
+    ExpectedSigner: "aff6a52990ce2335",
+})
+
+os.WriteFile(result.Filename, result.Data, 0o644)
+fmt.Println(result.Filename, result.ContentType, result.Meta)
+fmt.Println("signed by", result.SignerFingerprint)
+```
+
+Set `Passphrases` for a passphrase entry, and pass several keys at once for a
+quorum — `Open` collects shares until it has enough.
+
+**Handling failure**, which is most of what an opener does. Errors are sentinel
+values, comparable with `errors.Is`:
+
+```go
+switch {
+case errors.Is(err, cell.ErrIntegrity):
+    // header_hash or payload_hash mismatch — the cell was altered
+case errors.Is(err, cell.ErrSignature):
+    // header_sig present and invalid, or not the expected signer
+case errors.Is(err, cell.ErrDecryption):
+    // AES-GCM tag failed — ciphertext or AAD-bound metadata was tampered
+case errors.Is(err, cell.ErrQuorumNotMet):
+    // not enough shares
+case errors.Is(err, cell.ErrNoMatchingKey):
+    // none of the supplied material fits any access-map entry
+case errors.Is(err, cell.ErrLifetime):
+    // advisory gate: retention expired, or a timed release is still locked
+}
+```
+
+The distinctions matter — "this cell was tampered with" and "you gave me the
+wrong key" call for different responses.
+
+## Verify without any key
+
+```go
+report, err := cell.Verify(parsed, "")   // non-nil err on tampering
+fmt.Println(report.Signed, report.SignerFingerprint)
+```
+
+Any third party can confirm a cell has not been altered since it was sealed —
+without being able to read it. That is the property the whole format rests on.
 
 ## CLI
 

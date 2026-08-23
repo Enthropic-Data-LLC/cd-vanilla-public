@@ -16,35 +16,114 @@ Apache-2.0, like the rest of `impl/` — see [`LICENSING.md`](../../LICENSING.md
 </dependency>
 ```
 
-## Library
+## Encrypt
 
 ```java
-KeyRecord alice = KeyRecord.generate("Alice");
-KeyRecord bob   = KeyRecord.generate("Bob");
+import com.enthropicdata.cell.*;
+import java.nio.file.*;
+import java.util.List;
+import java.util.Map;
+
+// The recipient's public key. They generated it with `cdcell keygen` and sent
+// you the .cdpub; you never see their private key.
+KeyRecord alice = KeyRecord.fromCdpub(
+        Json.asObject(Json.parse(Files.readAllBytes(Path.of("alice.cdpub")))));
+
+// Your own key, used to sign the header so Alice can confirm you sealed it.
+KeyRecord me = KeyRecord.fromCdkey(
+        Json.asObject(Json.parse(Files.readAllBytes(Path.of("me.cdkey")))));
 
 Cell.CreateOptions opts = new Cell.CreateOptions();
-opts.threshold = 2;                       // 2-of-2 Shamir quorum
-opts.sender = alice;                      // adds an ECDSA header signature
-opts.meta = Json.of("case", "2026-0417"); // carried INSIDE the ciphertext
+opts.contentType = "application/pdf";
+opts.sender = me;                              // optional ECDSA header signature
+opts.meta = Json.of("case", "2026-0417");      // INSIDE the ciphertext
 
 Map<String, Object> sealed = Cell.create(
-        "quarterly numbers".getBytes(UTF_8), "q3.txt",
-        List.of(Cell.Recipient.forKey(alice), Cell.Recipient.forKey(bob)), opts);
+        Files.readAllBytes(Path.of("q3-results.pdf")), "q3-results.pdf",
+        List.of(Cell.Recipient.forKey(alice)), opts);
 
-Cell.verify(sealed, null);                // audit chain — no key material needed
-
-Cell.OpenOptions open = new Cell.OpenOptions();
-open.keys = List.of(alice, bob);
-open.expectedSigner = alice.fingerprint(); // authorship, against a known key
-byte[] plaintext = Cell.open(sealed, open).data();
+Files.writeString(Path.of("q3-results.cell"), Json.writePretty(sealed));
 ```
 
-Failures are subclasses of `CellException`: `Integrity`, `Signature`,
-`Decryption`, `NoMatchingKey`, `QuorumNotMet`, `Lifetime`, `UnsupportedVersion`,
-`Malformed`, `Canonicalization`. Unchecked, deliberately — a cell that fails to
-open is not something every layer should be forced to declare. The distinctions
-matter: "this cell was tampered with" and "you gave me the wrong key" call for
-different responses.
+The filename, media type, size and `meta` are all encrypted: an observer of the
+stored cell sees none of them (§5).
+
+**Several recipients, any one of whom can open it:**
+
+```java
+List<Cell.Recipient> recipients = List.of(
+        Cell.Recipient.forKey(alice),
+        Cell.Recipient.forKey(bob),
+        Cell.Recipient.passphrase("break glass in emergency", null));
+Map<String, Object> sealed = Cell.create(data, "q3-results.pdf", recipients, null);
+```
+
+**A quorum — two of the three together, and no fewer:**
+
+```java
+Cell.CreateOptions quorum = new Cell.CreateOptions();
+quorum.threshold = 2;                          // Shamir split over GF(256), §7
+Map<String, Object> sealed = Cell.create(data, "q3-results.pdf", recipients, quorum);
+```
+
+## Decrypt
+
+```java
+KeyRecord me = KeyRecord.fromCdkey(
+        Json.asObject(Json.parse(Files.readAllBytes(Path.of("me.cdkey")))));
+Map<String, Object> sealed =
+        Json.asObject(Json.parse(Files.readAllBytes(Path.of("q3-results.cell"))));
+
+Cell.OpenOptions opts = new Cell.OpenOptions();
+opts.keys = List.of(me);
+// Optional but recommended: a fingerprint you learned out of band. Without it,
+// "opened without error" is NOT evidence of who sealed the cell — a signature
+// can be stripped undetectably (§4.1).
+opts.expectedSigner = "aff6a52990ce2335";
+
+Cell.OpenResult result = Cell.open(sealed, opts);
+
+Files.write(Path.of(result.filename()), result.data());
+System.out.println(result.filename() + " " + result.contentType() + " " + result.meta());
+System.out.println("signed by " + result.signerFingerprint());
+```
+
+Set `opts.passphrases` for a passphrase entry, and pass several keys at once for
+a quorum — `open` collects shares until it has enough.
+
+**Handling failure**, which is most of what an opener does. Every failure is a
+subclass of `CellException`, unchecked by design:
+
+```java
+try {
+    Cell.OpenResult result = Cell.open(sealed, opts);
+} catch (CellException.Integrity e) {
+    // header_hash or payload_hash mismatch — the cell was altered
+} catch (CellException.Signature e) {
+    // header_sig present and invalid, or not the expected signer
+} catch (CellException.Decryption e) {
+    // AES-GCM tag failed — ciphertext or AAD-bound metadata was tampered
+} catch (CellException.QuorumNotMet e) {
+    // not enough shares
+} catch (CellException.NoMatchingKey e) {
+    // none of the supplied material fits any access-map entry
+} catch (CellException.Lifetime e) {
+    // advisory gate: retention expired, or a timed release is still locked
+}
+```
+
+Note `QuorumNotMet` extends `NoMatchingKey`, so catch it first if you want to
+distinguish them.
+
+## Verify without any key
+
+```java
+Cell.VerifyResult report = Cell.verify(sealed, null);   // throws on tampering
+System.out.println(report.signed() + " " + report.signerFingerprint());
+```
+
+Any third party can confirm a cell has not been altered since it was sealed —
+without being able to read it. That is the property the whole format rests on.
 
 ## CLI
 

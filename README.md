@@ -53,9 +53,13 @@ impl/java/          — fifth implementation, in Java (Apache-2.0, no runtime de
 conformance/        — shared test keys and .cell vectors for ANY implementation
 ```
 
-The last two are permissively licensed on purpose — see
-[`LICENSING.md`](LICENSING.md) §3. A format is only freely implementable if the
-means of checking your implementation is freely usable too.
+`cell-crypto.js` at the root **is** the JavaScript implementation; `impl/` holds
+the ports of it. Those and `conformance/` are permissively licensed on purpose —
+see [`LICENSING.md`](LICENSING.md) §3. A format is only freely implementable if
+the means of checking your implementation is freely usable too.
+
+[`impl/README.md`](impl/README.md) compares the five side by side, and each
+language README carries worked **encrypt** and **decrypt** examples.
 
 ## Running tests
 
