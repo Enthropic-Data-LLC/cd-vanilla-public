@@ -1,0 +1,1394 @@
+{
+  "note": "Canonical serialization vectors (spec §4.1.1). expected[] is what the reference implementation cell-crypto.js produces, which is what header_hash, header_sig and the AES-GCM AAD are computed over. Regenerate with conformance/make-canonical-vectors.sh.",
+  "spec_section": "4.1.1",
+  "generated_from": "cell-crypto.js canonicalize()",
+  "cases": [
+    {
+      "name": "integral float loses the point",
+      "input": 1,
+      "expected": "1"
+    },
+    {
+      "name": "negative zero prints as zero",
+      "input": 0,
+      "expected": "0"
+    },
+    {
+      "name": "exponent threshold, small",
+      "input": 1e-7,
+      "expected": "1e-7"
+    },
+    {
+      "name": "just inside decimal form",
+      "input": 0.000001,
+      "expected": "0.000001"
+    },
+    {
+      "name": "exponent threshold, large",
+      "input": 1e+21,
+      "expected": "1e+21"
+    },
+    {
+      "name": "just inside integer form",
+      "input": 100000000000000000000,
+      "expected": "100000000000000000000"
+    },
+    {
+      "name": "shortest round trip",
+      "input": 0.1,
+      "expected": "0.1"
+    },
+    {
+      "name": "denormal minimum",
+      "input": 5e-324,
+      "expected": "5e-324"
+    },
+    {
+      "name": "float64 maximum",
+      "input": 1.7976931348623157e+308,
+      "expected": "1.7976931348623157e+308"
+    },
+    {
+      "name": "integer above 2^53 rounds identically",
+      "input": 12345678901234567000,
+      "expected": "12345678901234567000"
+    },
+    {
+      "name": "keys sorted recursively",
+      "input": {
+        "b": 1,
+        "a": {
+          "d": 2,
+          "c": 3
+        }
+      },
+      "expected": "{\"a\":{\"c\":3,\"d\":2},\"b\":1}"
+    },
+    {
+      "name": "explicit null is preserved",
+      "input": {
+        "share_index": null
+      },
+      "expected": "{\"share_index\":null}"
+    },
+    {
+      "name": "empty key sorts first",
+      "input": {
+        "": 1,
+        "a": 2
+      },
+      "expected": "{\"\":1,\"a\":2}"
+    },
+    {
+      "name": "astral key sorts by UTF-16 code unit",
+      "input": {
+        "": 1,
+        "😀": 2
+      },
+      "expected": "{\"😀\":2,\"\":1}"
+    },
+    {
+      "name": "BOM-adjacent key ordering",
+      "input": {
+        "￿": 1,
+        "😀": 2,
+        "": 3
+      },
+      "expected": "{\"😀\":2,\"\":3,\"￿\":1}"
+    },
+    {
+      "name": "solidus is not escaped",
+      "input": "a/b",
+      "expected": "\"a/b\""
+    },
+    {
+      "name": "HTML characters are not escaped",
+      "input": "<script>&</script>",
+      "expected": "\"<script>&</script>\""
+    },
+    {
+      "name": "line separators are not escaped",
+      "input": "a b c",
+      "expected": "\"a b c\""
+    },
+    {
+      "name": "control characters use short escapes",
+      "input": "\b\t\n\f\r",
+      "expected": "\"\\b\\t\\n\\f\\r\""
+    },
+    {
+      "name": "other control chars use \\u00xx",
+      "input": "\u0000\u0001\u001f",
+      "expected": "\"\\u0000\\u0001\\u001f\""
+    },
+    {
+      "name": "quote and backslash",
+      "input": "q\"\\",
+      "expected": "\"q\\\"\\\\\""
+    },
+    {
+      "name": "non-ASCII emitted raw",
+      "input": "café 😀",
+      "expected": "\"café 😀\""
+    },
+    {
+      "name": "nested arrays and nulls",
+      "input": [
+        null,
+        false,
+        0,
+        "",
+        {},
+        []
+      ],
+      "expected": "[null,false,0,\"\",{},[]]"
+    },
+    {
+      "name": "lifetime shape",
+      "input": {
+        "type": "record",
+        "advisory": {
+          "retain_until": null,
+          "release_at": null,
+          "single_use": false,
+          "minimum_atl": 2
+        },
+        "disposal": {
+          "at": null,
+          "action": "archive"
+        }
+      },
+      "expected": "{\"advisory\":{\"minimum_atl\":2,\"release_at\":null,\"retain_until\":null,\"single_use\":false},\"disposal\":{\"action\":\"archive\",\"at\":null},\"type\":\"record\"}"
+    },
+    {
+      "name": "AAD meta array shape",
+      "input": [
+        null,
+        {
+          "required": 2,
+          "of_total": 3
+        },
+        null,
+        {
+          "copy_protection": "standard"
+        }
+      ],
+      "expected": "[null,{\"of_total\":3,\"required\":2},null,{\"copy_protection\":\"standard\"}]"
+    },
+    {
+      "name": "fuzz-000",
+      "input": [
+        ""
+      ],
+      "expected": "[\"\"]"
+    },
+    {
+      "name": "fuzz-001",
+      "input": " x",
+      "expected": "\" x\""
+    },
+    {
+      "name": "fuzz-002",
+      "input": {
+        "😀": null,
+        "z": [
+          null,
+          1096899890246
+        ],
+        "share_index": 1083182810268
+      },
+      "expected": "{\"share_index\":1083182810268,\"z\":[null,1096899890246],\"😀\":null}"
+    },
+    {
+      "name": "fuzz-003",
+      "input": [
+        null,
+        true,
+        {
+          "a": true
+        }
+      ],
+      "expected": "[null,true,{\"a\":true}]"
+    },
+    {
+      "name": "fuzz-004",
+      "input": "a",
+      "expected": "\"a\""
+    },
+    {
+      "name": "fuzz-005",
+      "input": true,
+      "expected": "true"
+    },
+    {
+      "name": "fuzz-006",
+      "input": 1e-7,
+      "expected": "1e-7"
+    },
+    {
+      "name": "fuzz-007",
+      "input": {
+        "": "share_index",
+        "é": {
+          "0": 0.1,
+          "a": 100000000000000000000,
+          "policy": "￿",
+          "é": [
+            "z",
+            6.5992865398305365e-133,
+            true
+          ],
+          "": null
+        },
+        "￿": false
+      },
+      "expected": "{\"\":\"share_index\",\"é\":{\"0\":0.1,\"a\":100000000000000000000,\"policy\":\"￿\",\"é\":[\"z\",6.5992865398305365e-133,true],\"\":null},\"￿\":false}"
+    },
+    {
+      "name": "fuzz-008",
+      "input": -6.231646353718969e-135,
+      "expected": "-6.231646353718969e-135"
+    },
+    {
+      "name": "fuzz-009",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-010",
+      "input": "a/b",
+      "expected": "\"a/b\""
+    },
+    {
+      "name": "fuzz-011",
+      "input": 692885106167,
+      "expected": "692885106167"
+    },
+    {
+      "name": "fuzz-012",
+      "input": {
+        "é": -1.962779453944975e+157,
+        "": 1.4289340697413183e-305
+      },
+      "expected": "{\"\":1.4289340697413183e-305,\"é\":-1.962779453944975e+157}"
+    },
+    {
+      "name": "fuzz-013",
+      "input": [
+        [],
+        2.0488101266495867e-55,
+        92496718868
+      ],
+      "expected": "[[],2.0488101266495867e-55,92496718868]"
+    },
+    {
+      "name": "fuzz-014",
+      "input": true,
+      "expected": "true"
+    },
+    {
+      "name": "fuzz-015",
+      "input": {
+        "0": 0,
+        "": 1.4283820157776454e-14,
+        "": 992569463094,
+        "￿": {
+          "": -3.8314380258608684e-76,
+          "￿": {
+            "0": "",
+            "policy": true,
+            "Z": 100000000000000000000,
+            "￿": false,
+            "share_index": "a/b"
+          },
+          "policy": null,
+          "😀": [
+            true
+          ],
+          "é": []
+        }
+      },
+      "expected": "{\"\":1.4283820157776454e-14,\"0\":0,\"\":992569463094,\"￿\":{\"policy\":null,\"é\":[],\"😀\":[true],\"\":-3.8314380258608684e-76,\"￿\":{\"0\":\"\",\"Z\":100000000000000000000,\"policy\":true,\"share_index\":\"a/b\",\"￿\":false}}}"
+    },
+    {
+      "name": "fuzz-016",
+      "input": {
+        "😀": [
+          {
+            "0": -2.4784418287322573e-36,
+            "policy": false
+          },
+          null
+        ],
+        "policy": null,
+        "é": " x",
+        "": 8.042806053386585e+164
+      },
+      "expected": "{\"\":8.042806053386585e+164,\"policy\":null,\"é\":\" x\",\"😀\":[{\"0\":-2.4784418287322573e-36,\"policy\":false},null]}"
+    },
+    {
+      "name": "fuzz-017",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-018",
+      "input": 5.267782834234175e-8,
+      "expected": "5.267782834234175e-8"
+    },
+    {
+      "name": "fuzz-019",
+      "input": "a/b",
+      "expected": "\"a/b\""
+    },
+    {
+      "name": "fuzz-020",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-021",
+      "input": [
+        null
+      ],
+      "expected": "[null]"
+    },
+    {
+      "name": "fuzz-022",
+      "input": {
+        "": "a",
+        "a": null,
+        "😀": 100000000000000000000,
+        "é": "B",
+        "z": {
+          "B": " "
+        }
+      },
+      "expected": "{\"\":\"a\",\"a\":null,\"z\":{\"B\":\" \"},\"é\":\"B\",\"😀\":100000000000000000000}"
+    },
+    {
+      "name": "fuzz-023",
+      "input": 0,
+      "expected": "0"
+    },
+    {
+      "name": "fuzz-024",
+      "input": {
+        "Z": true,
+        "": null,
+        "B": 0.000001,
+        "share_index": "￿",
+        "policy": -703769942843
+      },
+      "expected": "{\"B\":0.000001,\"Z\":true,\"policy\":-703769942843,\"share_index\":\"￿\",\"\":null}"
+    },
+    {
+      "name": "fuzz-025",
+      "input": -696700674259,
+      "expected": "-696700674259"
+    },
+    {
+      "name": "fuzz-026",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-027",
+      "input": {
+        "￿": [],
+        "é": {
+          "￿": 1e+21,
+          "Z": true
+        },
+        "B": true,
+        "": "0"
+      },
+      "expected": "{\"\":\"0\",\"B\":true,\"é\":{\"Z\":true,\"￿\":1e+21},\"￿\":[]}"
+    },
+    {
+      "name": "fuzz-028",
+      "input": -1.5249345867466437e+272,
+      "expected": "-1.5249345867466437e+272"
+    },
+    {
+      "name": "fuzz-029",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-030",
+      "input": {
+        "z": "",
+        "é": 100000000000000000000
+      },
+      "expected": "{\"z\":\"\",\"é\":100000000000000000000}"
+    },
+    {
+      "name": "fuzz-031",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-032",
+      "input": "",
+      "expected": "\"\""
+    },
+    {
+      "name": "fuzz-033",
+      "input": -2.6168555031762977e-82,
+      "expected": "-2.6168555031762977e-82"
+    },
+    {
+      "name": "fuzz-034",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-035",
+      "input": 280025177151,
+      "expected": "280025177151"
+    },
+    {
+      "name": "fuzz-036",
+      "input": 0.1,
+      "expected": "0.1"
+    },
+    {
+      "name": "fuzz-037",
+      "input": [
+        "😀 astral"
+      ],
+      "expected": "[\"😀 astral\"]"
+    },
+    {
+      "name": "fuzz-038",
+      "input": [
+        "B"
+      ],
+      "expected": "[\"B\"]"
+    },
+    {
+      "name": "fuzz-039",
+      "input": "",
+      "expected": "\"\""
+    },
+    {
+      "name": "fuzz-040",
+      "input": -587231029775,
+      "expected": "-587231029775"
+    },
+    {
+      "name": "fuzz-041",
+      "input": {
+        "a": [],
+        "": [
+          "a/b",
+          [
+            727544218364,
+            -6.5897570610399695e-68
+          ],
+          9007199254740991
+        ],
+        "￿": -784803079155,
+        "Z": [
+          "Z",
+          [
+            -9.532509670620881e-63
+          ]
+        ]
+      },
+      "expected": "{\"Z\":[\"Z\",[-9.532509670620881e-63]],\"a\":[],\"\":[\"a/b\",[727544218364,-6.5897570610399695e-68],9007199254740991],\"￿\":-784803079155}"
+    },
+    {
+      "name": "fuzz-042",
+      "input": 5.954281268525675e+306,
+      "expected": "5.954281268525675e+306"
+    },
+    {
+      "name": "fuzz-043",
+      "input": "😀 astral",
+      "expected": "\"😀 astral\""
+    },
+    {
+      "name": "fuzz-044",
+      "input": [],
+      "expected": "[]"
+    },
+    {
+      "name": "fuzz-045",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-046",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-047",
+      "input": 1.4391893631360652e+175,
+      "expected": "1.4391893631360652e+175"
+    },
+    {
+      "name": "fuzz-048",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-049",
+      "input": 9007199254740991,
+      "expected": "9007199254740991"
+    },
+    {
+      "name": "fuzz-050",
+      "input": [],
+      "expected": "[]"
+    },
+    {
+      "name": "fuzz-051",
+      "input": {
+        "a": null,
+        "share_index": 1052539059562,
+        "": 0
+      },
+      "expected": "{\"\":0,\"a\":null,\"share_index\":1052539059562}"
+    },
+    {
+      "name": "fuzz-052",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-053",
+      "input": "ünïcødé",
+      "expected": "\"ünïcødé\""
+    },
+    {
+      "name": "fuzz-054",
+      "input": "Z",
+      "expected": "\"Z\""
+    },
+    {
+      "name": "fuzz-055",
+      "input": [
+        [],
+        null,
+        0
+      ],
+      "expected": "[[],null,0]"
+    },
+    {
+      "name": "fuzz-056",
+      "input": -5.30934323247977e+59,
+      "expected": "-5.30934323247977e+59"
+    },
+    {
+      "name": "fuzz-057",
+      "input": {
+        "😀": null
+      },
+      "expected": "{\"😀\":null}"
+    },
+    {
+      "name": "fuzz-058",
+      "input": "<&>",
+      "expected": "\"<&>\""
+    },
+    {
+      "name": "fuzz-059",
+      "input": 5.9287409632230176e-92,
+      "expected": "5.9287409632230176e-92"
+    },
+    {
+      "name": "fuzz-060",
+      "input": 2.8661075014869977e+112,
+      "expected": "2.8661075014869977e+112"
+    },
+    {
+      "name": "fuzz-061",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-062",
+      "input": true,
+      "expected": "true"
+    },
+    {
+      "name": "fuzz-063",
+      "input": {
+        "😀": "a"
+      },
+      "expected": "{\"😀\":\"a\"}"
+    },
+    {
+      "name": "fuzz-064",
+      "input": 839136387657,
+      "expected": "839136387657"
+    },
+    {
+      "name": "fuzz-065",
+      "input": -6.406906520391049e-290,
+      "expected": "-6.406906520391049e-290"
+    },
+    {
+      "name": "fuzz-066",
+      "input": 0.1,
+      "expected": "0.1"
+    },
+    {
+      "name": "fuzz-067",
+      "input": 100000000000000000000,
+      "expected": "100000000000000000000"
+    },
+    {
+      "name": "fuzz-068",
+      "input": "0",
+      "expected": "\"0\""
+    },
+    {
+      "name": "fuzz-069",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-070",
+      "input": [],
+      "expected": "[]"
+    },
+    {
+      "name": "fuzz-071",
+      "input": "a/b",
+      "expected": "\"a/b\""
+    },
+    {
+      "name": "fuzz-072",
+      "input": "",
+      "expected": "\"\""
+    },
+    {
+      "name": "fuzz-073",
+      "input": {
+        "z": 100000000000000000000,
+        "": true,
+        "￿": null,
+        "a": "B"
+      },
+      "expected": "{\"a\":\"B\",\"z\":100000000000000000000,\"\":true,\"￿\":null}"
+    },
+    {
+      "name": "fuzz-074",
+      "input": 291397509715,
+      "expected": "291397509715"
+    },
+    {
+      "name": "fuzz-075",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-076",
+      "input": "0",
+      "expected": "\"0\""
+    },
+    {
+      "name": "fuzz-077",
+      "input": -4.1017873071588537e-252,
+      "expected": "-4.1017873071588537e-252"
+    },
+    {
+      "name": "fuzz-078",
+      "input": -104678708689,
+      "expected": "-104678708689"
+    },
+    {
+      "name": "fuzz-079",
+      "input": 0.1,
+      "expected": "0.1"
+    },
+    {
+      "name": "fuzz-080",
+      "input": 4.9549365845903377e-175,
+      "expected": "4.9549365845903377e-175"
+    },
+    {
+      "name": "fuzz-081",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-082",
+      "input": "￿",
+      "expected": "\"￿\""
+    },
+    {
+      "name": "fuzz-083",
+      "input": [],
+      "expected": "[]"
+    },
+    {
+      "name": "fuzz-084",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-085",
+      "input": "😀 astral",
+      "expected": "\"😀 astral\""
+    },
+    {
+      "name": "fuzz-086",
+      "input": "q\"\\\n\t",
+      "expected": "\"q\\\"\\\\\\n\\t\""
+    },
+    {
+      "name": "fuzz-087",
+      "input": -505224500624,
+      "expected": "-505224500624"
+    },
+    {
+      "name": "fuzz-088",
+      "input": [
+        "B",
+        0
+      ],
+      "expected": "[\"B\",0]"
+    },
+    {
+      "name": "fuzz-089",
+      "input": "q\"\\\n\t",
+      "expected": "\"q\\\"\\\\\\n\\t\""
+    },
+    {
+      "name": "fuzz-090",
+      "input": {
+        "0": "q\"\\\n\t",
+        "policy": "a"
+      },
+      "expected": "{\"0\":\"q\\\"\\\\\\n\\t\",\"policy\":\"a\"}"
+    },
+    {
+      "name": "fuzz-091",
+      "input": "B",
+      "expected": "\"B\""
+    },
+    {
+      "name": "fuzz-092",
+      "input": -811995518547,
+      "expected": "-811995518547"
+    },
+    {
+      "name": "fuzz-093",
+      "input": "a/b",
+      "expected": "\"a/b\""
+    },
+    {
+      "name": "fuzz-094",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-095",
+      "input": 1e+21,
+      "expected": "1e+21"
+    },
+    {
+      "name": "fuzz-096",
+      "input": -7.648135177709587e-180,
+      "expected": "-7.648135177709587e-180"
+    },
+    {
+      "name": "fuzz-097",
+      "input": -920528215754,
+      "expected": "-920528215754"
+    },
+    {
+      "name": "fuzz-098",
+      "input": -370727911149,
+      "expected": "-370727911149"
+    },
+    {
+      "name": "fuzz-099",
+      "input": -446590697335,
+      "expected": "-446590697335"
+    },
+    {
+      "name": "fuzz-100",
+      "input": 1e-7,
+      "expected": "1e-7"
+    },
+    {
+      "name": "fuzz-101",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-102",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-103",
+      "input": 18933816369,
+      "expected": "18933816369"
+    },
+    {
+      "name": "fuzz-104",
+      "input": [
+        1.7192093878163745e+105,
+        -4.069434429196215e+156
+      ],
+      "expected": "[1.7192093878163745e+105,-4.069434429196215e+156]"
+    },
+    {
+      "name": "fuzz-105",
+      "input": {
+        "B": 1e+21,
+        "": 384026507491
+      },
+      "expected": "{\"\":384026507491,\"B\":1e+21}"
+    },
+    {
+      "name": "fuzz-106",
+      "input": "ünïcødé",
+      "expected": "\"ünïcødé\""
+    },
+    {
+      "name": "fuzz-107",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-108",
+      "input": 0,
+      "expected": "0"
+    },
+    {
+      "name": "fuzz-109",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-110",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-111",
+      "input": -2.8644372739872557e+252,
+      "expected": "-2.8644372739872557e+252"
+    },
+    {
+      "name": "fuzz-112",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-113",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-114",
+      "input": 100000000000000000000,
+      "expected": "100000000000000000000"
+    },
+    {
+      "name": "fuzz-115",
+      "input": 830643368562,
+      "expected": "830643368562"
+    },
+    {
+      "name": "fuzz-116",
+      "input": 291796408748,
+      "expected": "291796408748"
+    },
+    {
+      "name": "fuzz-117",
+      "input": true,
+      "expected": "true"
+    },
+    {
+      "name": "fuzz-118",
+      "input": [
+        "share_index"
+      ],
+      "expected": "[\"share_index\"]"
+    },
+    {
+      "name": "fuzz-119",
+      "input": -7.594534409183015e-182,
+      "expected": "-7.594534409183015e-182"
+    },
+    {
+      "name": "fuzz-120",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-121",
+      "input": {
+        "0": -938568580499,
+        "share_index": true,
+        "": 100000000000000000000,
+        "a": null,
+        "z": [
+          null
+        ]
+      },
+      "expected": "{\"\":100000000000000000000,\"0\":-938568580499,\"a\":null,\"share_index\":true,\"z\":[null]}"
+    },
+    {
+      "name": "fuzz-122",
+      "input": 761111164965,
+      "expected": "761111164965"
+    },
+    {
+      "name": "fuzz-123",
+      "input": "￿",
+      "expected": "\"￿\""
+    },
+    {
+      "name": "fuzz-124",
+      "input": " ",
+      "expected": "\" \""
+    },
+    {
+      "name": "fuzz-125",
+      "input": "z",
+      "expected": "\"z\""
+    },
+    {
+      "name": "fuzz-126",
+      "input": 0,
+      "expected": "0"
+    },
+    {
+      "name": "fuzz-127",
+      "input": "q\"\\\n\t",
+      "expected": "\"q\\\"\\\\\\n\\t\""
+    },
+    {
+      "name": "fuzz-128",
+      "input": -346204813958,
+      "expected": "-346204813958"
+    },
+    {
+      "name": "fuzz-129",
+      "input": "😀",
+      "expected": "\"😀\""
+    },
+    {
+      "name": "fuzz-130",
+      "input": "😀 astral",
+      "expected": "\"😀 astral\""
+    },
+    {
+      "name": "fuzz-131",
+      "input": [
+        0.0003910582502114185,
+        null
+      ],
+      "expected": "[0.0003910582502114185,null]"
+    },
+    {
+      "name": "fuzz-132",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-133",
+      "input": true,
+      "expected": "true"
+    },
+    {
+      "name": "fuzz-134",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-135",
+      "input": 8.386817924002354e+49,
+      "expected": "8.386817924002354e+49"
+    },
+    {
+      "name": "fuzz-136",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-137",
+      "input": 0.000001,
+      "expected": "0.000001"
+    },
+    {
+      "name": "fuzz-138",
+      "input": 2.862596328448979e-200,
+      "expected": "2.862596328448979e-200"
+    },
+    {
+      "name": "fuzz-139",
+      "input": "￿",
+      "expected": "\"￿\""
+    },
+    {
+      "name": "fuzz-140",
+      "input": [],
+      "expected": "[]"
+    },
+    {
+      "name": "fuzz-141",
+      "input": "<&>",
+      "expected": "\"<&>\""
+    },
+    {
+      "name": "fuzz-142",
+      "input": {
+        "z": "policy",
+        "policy": 0
+      },
+      "expected": "{\"policy\":0,\"z\":\"policy\"}"
+    },
+    {
+      "name": "fuzz-143",
+      "input": "z",
+      "expected": "\"z\""
+    },
+    {
+      "name": "fuzz-144",
+      "input": 1e+21,
+      "expected": "1e+21"
+    },
+    {
+      "name": "fuzz-145",
+      "input": -955621223264,
+      "expected": "-955621223264"
+    },
+    {
+      "name": "fuzz-146",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-147",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-148",
+      "input": 3.590896020279453e+294,
+      "expected": "3.590896020279453e+294"
+    },
+    {
+      "name": "fuzz-149",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-150",
+      "input": [
+        100000000000000000000
+      ],
+      "expected": "[100000000000000000000]"
+    },
+    {
+      "name": "fuzz-151",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-152",
+      "input": 1e+21,
+      "expected": "1e+21"
+    },
+    {
+      "name": "fuzz-153",
+      "input": 8.653651774548546e-60,
+      "expected": "8.653651774548546e-60"
+    },
+    {
+      "name": "fuzz-154",
+      "input": 474251264200,
+      "expected": "474251264200"
+    },
+    {
+      "name": "fuzz-155",
+      "input": 0,
+      "expected": "0"
+    },
+    {
+      "name": "fuzz-156",
+      "input": "",
+      "expected": "\"\""
+    },
+    {
+      "name": "fuzz-157",
+      "input": "",
+      "expected": "\"\""
+    },
+    {
+      "name": "fuzz-158",
+      "input": 668477334104,
+      "expected": "668477334104"
+    },
+    {
+      "name": "fuzz-159",
+      "input": 1e+21,
+      "expected": "1e+21"
+    },
+    {
+      "name": "fuzz-160",
+      "input": {
+        "Z": -477556356688,
+        "z": false
+      },
+      "expected": "{\"Z\":-477556356688,\"z\":false}"
+    },
+    {
+      "name": "fuzz-161",
+      "input": -1.8542836596814628e-9,
+      "expected": "-1.8542836596814628e-9"
+    },
+    {
+      "name": "fuzz-162",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-163",
+      "input": -1.1207726204775247e-239,
+      "expected": "-1.1207726204775247e-239"
+    },
+    {
+      "name": "fuzz-164",
+      "input": [
+        true
+      ],
+      "expected": "[true]"
+    },
+    {
+      "name": "fuzz-165",
+      "input": 1e+21,
+      "expected": "1e+21"
+    },
+    {
+      "name": "fuzz-166",
+      "input": {
+        "": true,
+        "z": null,
+        "a": 266174320907,
+        "￿": [
+          0.000001,
+          647608453979,
+          null
+        ],
+        "": -1.4950087130211333e-224
+      },
+      "expected": "{\"\":-1.4950087130211333e-224,\"a\":266174320907,\"z\":null,\"\":true,\"￿\":[0.000001,647608453979,null]}"
+    },
+    {
+      "name": "fuzz-167",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-168",
+      "input": 1029119750472,
+      "expected": "1029119750472"
+    },
+    {
+      "name": "fuzz-169",
+      "input": "<&>",
+      "expected": "\"<&>\""
+    },
+    {
+      "name": "fuzz-170",
+      "input": "z",
+      "expected": "\"z\""
+    },
+    {
+      "name": "fuzz-171",
+      "input": {
+        "a": null,
+        "policy": null,
+        "share_index": 1058163435685
+      },
+      "expected": "{\"a\":null,\"policy\":null,\"share_index\":1058163435685}"
+    },
+    {
+      "name": "fuzz-172",
+      "input": true,
+      "expected": "true"
+    },
+    {
+      "name": "fuzz-173",
+      "input": 100000000000000000000,
+      "expected": "100000000000000000000"
+    },
+    {
+      "name": "fuzz-174",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-175",
+      "input": 1e-7,
+      "expected": "1e-7"
+    },
+    {
+      "name": "fuzz-176",
+      "input": {
+        "": 1e+21,
+        "😀": -4.178173850256518e+252,
+        "": "B"
+      },
+      "expected": "{\"\":\"B\",\"😀\":-4.178173850256518e+252,\"\":1e+21}"
+    },
+    {
+      "name": "fuzz-177",
+      "input": "policy",
+      "expected": "\"policy\""
+    },
+    {
+      "name": "fuzz-178",
+      "input": {
+        "": {
+          "a": -681236935708,
+          "": {
+            "0": null,
+            "": " ",
+            "😀": "Z",
+            "share_index": 7.779380793041818e+268
+          },
+          "policy": {
+            "é": "😀 astral",
+            "policy": null,
+            "Z": "<&>",
+            "": "a/b"
+          }
+        }
+      },
+      "expected": "{\"\":{\"a\":-681236935708,\"policy\":{\"\":\"a/b\",\"Z\":\"<&>\",\"policy\":null,\"é\":\"😀 astral\"},\"\":{\"\":\" \",\"0\":null,\"share_index\":7.779380793041818e+268,\"😀\":\"Z\"}}}"
+    },
+    {
+      "name": "fuzz-179",
+      "input": 401940715821,
+      "expected": "401940715821"
+    },
+    {
+      "name": "fuzz-180",
+      "input": {
+        "policy": null,
+        "": "a",
+        "a": 1091896104649,
+        "￿": null,
+        "share_index": "policy"
+      },
+      "expected": "{\"\":\"a\",\"a\":1091896104649,\"policy\":null,\"share_index\":\"policy\",\"￿\":null}"
+    },
+    {
+      "name": "fuzz-181",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-182",
+      "input": 800254174620,
+      "expected": "800254174620"
+    },
+    {
+      "name": "fuzz-183",
+      "input": "0",
+      "expected": "\"0\""
+    },
+    {
+      "name": "fuzz-184",
+      "input": true,
+      "expected": "true"
+    },
+    {
+      "name": "fuzz-185",
+      "input": [
+        -6.657288857621111e-121,
+        0,
+        9007199254740991
+      ],
+      "expected": "[-6.657288857621111e-121,0,9007199254740991]"
+    },
+    {
+      "name": "fuzz-186",
+      "input": true,
+      "expected": "true"
+    },
+    {
+      "name": "fuzz-187",
+      "input": null,
+      "expected": "null"
+    },
+    {
+      "name": "fuzz-188",
+      "input": -333996427661,
+      "expected": "-333996427661"
+    },
+    {
+      "name": "fuzz-189",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-190",
+      "input": 0,
+      "expected": "0"
+    },
+    {
+      "name": "fuzz-191",
+      "input": -850474687622,
+      "expected": "-850474687622"
+    },
+    {
+      "name": "fuzz-192",
+      "input": false,
+      "expected": "false"
+    },
+    {
+      "name": "fuzz-193",
+      "input": "￿",
+      "expected": "\"￿\""
+    },
+    {
+      "name": "fuzz-194",
+      "input": 1e+21,
+      "expected": "1e+21"
+    },
+    {
+      "name": "fuzz-195",
+      "input": 9007199254740991,
+      "expected": "9007199254740991"
+    },
+    {
+      "name": "fuzz-196",
+      "input": -528097688143,
+      "expected": "-528097688143"
+    },
+    {
+      "name": "fuzz-197",
+      "input": 1e+21,
+      "expected": "1e+21"
+    },
+    {
+      "name": "fuzz-198",
+      "input": {
+        "0": -960243766751,
+        "￿": 100000000000000000000,
+        "Z": false,
+        "B": 0.000001
+      },
+      "expected": "{\"0\":-960243766751,\"B\":0.000001,\"Z\":false,\"￿\":100000000000000000000}"
+    },
+    {
+      "name": "fuzz-199",
+      "input": "q\"\\\n\t",
+      "expected": "\"q\\\"\\\\\\n\\t\""
+    }
+  ]
+}

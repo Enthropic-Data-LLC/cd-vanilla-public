@@ -27,9 +27,11 @@ writing JavaScript. Three parts of it do not come free in Python:
    agree for every character in the Basic Multilingual Plane and disagree above
    it (an astral key sorts *below* U+E000..U+FFFF in JS, above in Python).
    :func:`_sort_key` sorts the JS way.
-3. **Integer range.** JSON has no integers, only float64. Python does, and will
-   happily serialize ``2**60`` exactly where JS rounds it. Rather than emit
-   bytes a JS reader can never reproduce, we raise.
+3. **Integer range.** JSON has no integers, only float64. Python does, and
+   would serialize ``2**60`` exactly where JS rounds it to the nearest float64.
+   :func:`js_number` rounds the same way, so the two agree; the temptation to
+   raise instead is wrong, because the reference itself emits such literals for
+   any float64 at or above 1e21.
 
 Everything else — string escaping, ``true``/``false``/``null`` — Python's
 ``json.dumps(ensure_ascii=False)`` already matches.
@@ -80,13 +82,17 @@ def js_number(value: float | int) -> str:
     if isinstance(value, bool):  # bool is an int in Python; JSON says otherwise
         raise CanonicalizationError("bool is not a number")
     if isinstance(value, int):
-        if abs(value) > MAX_SAFE_INTEGER:
-            raise CanonicalizationError(
-                f"integer {value} exceeds JavaScript's exact integer range "
-                f"(±{MAX_SAFE_INTEGER}); a reference-implementation reader would "
-                f"round it and compute a different header_hash"
-            )
-        return str(value)
+        # Below 2^53 a Python int and a JavaScript number agree exactly, and
+        # str() is both correct and cheaper. Above it they do not — but the
+        # answer is to do what JavaScript does, not to refuse. JS has no
+        # integers: it parses such a literal into the nearest float64 and prints
+        # that back, so converting here reproduces its bytes exactly. Refusing
+        # instead (as this did until the Go port ran the shared vectors) rejects
+        # values the reference round-trips happily, including the ones its own
+        # canonicalize() emits for any float64 at or above 1e21.
+        if abs(value) <= MAX_SAFE_INTEGER:
+            return str(value)
+        value = float(value)
     if math.isnan(value) or math.isinf(value):
         # JSON.stringify emits null for these; they must never reach a hash.
         raise CanonicalizationError(f"{value!r} is not representable in JSON")
