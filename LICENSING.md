@@ -44,11 +44,11 @@ If you cannot or will not publish your modifications under those terms — the
 usual case for a proprietary product or a closed hosted service — you need a
 **commercial license**.
 
-## 3. The Python, Go and Rust implementations, and the conformance suite — Apache-2.0
+## 3. The ported implementations and the conformance suite — Apache-2.0
 
 `impl/` and `conformance/` are licensed under the **Apache License 2.0**
-([`impl/python/LICENSE`](impl/python/LICENSE), [`impl/go/LICENSE`](impl/go/LICENSE),
-[`impl/rust/LICENSE`](impl/rust/LICENSE), [`conformance/LICENSE`](conformance/LICENSE)) — **not** the AGPL that covers the
+(one `LICENSE` per directory under `impl/`, plus
+[`conformance/LICENSE`](conformance/LICENSE)) — **not** the AGPL that covers the
 rest of this repository.
 
 This is deliberate, and it follows directly from §1. A format that is free to
@@ -62,8 +62,8 @@ So these two directories are permissive on purpose:
 - **`conformance/`** — shared test keys and captured `.cell` vectors, with the
   generators that produced them. Use them to validate any implementation, in any
   language, under any license.
-- **`impl/python/`**, **`impl/go/`** and **`impl/rust/`** — independent implementations written
-  from `docs/SPEC.md`. Embed them, fork them, ship them in a closed product; the
+- **`impl/python/`**, **`impl/go/`**, **`impl/rust/`** and **`impl/java/`** —
+  independent implementations written from `docs/SPEC.md`. Embed them, fork them, ship them in a closed product; the
   Apache license asks only for attribution and the patent grant it carries.
 
 The AGPL in [`LICENSE`](LICENSE) continues to cover `cell-crypto.js`,
