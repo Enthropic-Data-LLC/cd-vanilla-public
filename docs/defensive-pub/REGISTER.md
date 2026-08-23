@@ -53,10 +53,42 @@ Bitcoin attestation on 2026-08-10:
 | 961805 | `7edb17cfcb5971918699e5f8d2dcd4d243fa5d1edbc2dbdc14f0639db2f3cb17` | 2026-08-10 00:41:25 |
 | 961836 | `f7128ba0009ca2e1c744b5bcc463a5980dad035e27b644a91c66b8eaf07e34bf` | 2026-08-10 04:42:43 |
 
-Both live files are **byte-identical to their anchors** — `sha256sum docs/SPEC.md
-cell-crypto.js` reproduces the digests above. Frozen copies with their upgraded
-proofs are in `docs/defensive-pub/anchors/v1.3/`. Keep it that way: any edit to
-either file, however editorial, breaks that identity and needs a fresh stamp.
+Frozen copies with their upgraded proofs are in `docs/defensive-pub/anchors/v1.3/`
+and must never be edited. `cell-crypto.js` remains **byte-identical to its
+anchor** — `sha256sum cell-crypto.js` reproduces the digest above.
+
+### `docs/SPEC.md` — documentation revision, stamped 2026-08-23 (pending)
+
+`docs/SPEC.md` is **no longer byte-identical to the v1.3 anchor**, and that is
+intentional. Two documentation revisions were applied on 2026-08-23 —
+`1.3 (corrections 2)` and `1.3 (corrections 3)` in the changelog — and the file
+was re-stamped:
+
+| Artifact | SHA-256 | Anchored |
+|---|---|---|
+| `docs/SPEC.md` (v1.3 + corrections 2 and 3) | `0412968eed2d6e16831a8fa4130eaf1a9fedaad38fa3fceb56aa12dd0aad9e0b` | 2026-08-23, OTS — **pending Bitcoin confirmation**, run `ots upgrade docs/SPEC.md.ots` |
+
+**Neither revision changes the format.** No wire change, no cell ever written is
+affected, and `cell-crypto.js` is unmodified — which is why its anchor still
+holds and only the specification needed re-stamping. Corrections 2 fixed three
+places where the document contradicted itself; corrections 3 made §4.1.1
+self-contained, replacing a deferral to JavaScript's `JSON.stringify` with the
+four rules that deferral silently imported. Each of those four had independently
+produced a non-matching `header_hash` during the Python, Go, Rust and Java ports.
+
+The priority date for every *mechanism* remains the confirmed v1.3 anchor above:
+prior art is established by what the disclosure describes, and describing it more
+precisely does not restart that clock. The new stamp exists so the corrected text
+has its own verifiable date, not to claim a new one for the format.
+
+**Still owed:** `ots upgrade docs/SPEC.md.ots` once Bitcoin confirms (hours, not
+days), then freeze the pair into `docs/defensive-pub/anchors/` alongside the
+others and record the block heights here. Until that upgrade lands this row is a
+calendar attestation only.
+
+> ⚠️ The private working repository `sohocs509/cd-vanilla` carried corrections 2
+> **unstamped** from 2026-08-23. Its `docs/SPEC.md` should be brought to
+> `0412968e…` so the two trees agree and only one digest is in circulation.
 
 Superseded v1.3 stamps, left pending and overtaken the same day — do not cite:
 `9e119336…` (SPEC.md, pre-corrections) and `69c2a89d…` (cell-crypto.js,
