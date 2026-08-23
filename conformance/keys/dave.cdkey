@@ -1,0 +1,11 @@
+{
+  "cd_key": "2.0",
+  "keyId": "conformance-dave",
+  "label": "Dave",
+  "method": "ecdh-p256",
+  "fingerprint": "6574194ee815c0f2",
+  "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEiZuJA0HRaUQc/yGy1T7IuqBY7SWrVkMGkB3Bw5dmD9UsXTpJD3sHD2WG4NWpkhYn8cOQiw40guxYFyKByiXl5w==",
+  "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQghh3kgCYeG4AtNPWVWode5BPQivAg9hpFLsLCiwPiI+ShRANCAASJm4kDQdFpRBz/IbLVPsi6oFjtJatWQwaQHcHDl2YP1SxdOkkPewcPZYbg1amSFifxw5CLDjSC7FgXIoHKJeXn",
+  "created_at": 0,
+  "exported_at": 0
+}

@@ -1,0 +1,49 @@
+{
+  "version": "1.2",
+  "doc_id": "01CONFORMANCE120000000000",
+  "created_at": 1787500000,
+  "header": {
+    "prev_hash": null,
+    "threshold": {
+      "required": 1,
+      "of_total": 1
+    },
+    "lifetime": {
+      "type": "session",
+      "expires_at": null,
+      "release_at": null,
+      "single_use": false,
+      "minimum_atl": 1,
+      "on_expiry": "delete"
+    },
+    "policy": {
+      "copy_protection": "standard",
+      "watermark_mode": "none",
+      "created_on_origin": "https://conformance.invalid",
+      "origin_sig": null
+    },
+    "access_map": [
+      {
+        "label": "Alice",
+        "method": "ecdh-p256",
+        "fingerprint": "97017b8bf3caab2d",
+        "wrapped_cek": {
+          "eph_spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1d4zu5uVCDba+t3ZY/WOoH+fDEEG/0lrEEHTto1ni4Z1E8chiZl6tXkKdPkzj+bq/qkRIhEp7XVv0JGJdLTzqg==",
+          "hkdf_salt": "tDyeDzV9ocoB6IIZJW58Tj65CI0e9050Oh7M+v2Cx8g=",
+          "ct": "pHKOC94a9tIeemmkaFEMqBWuBMqDUECcuj8D/d+yaS7GUcVdNePjcA=="
+        }
+      }
+    ],
+    "payload_hash": "Dspg5xij+w7P0qYY37usyn7efGCTjGF6Qyh1d9O7Csw="
+  },
+  "header_hash": "frHC/ShUGLQfZgDWGE0ecMwxFEDDEuhzhoZqK68nGb8=",
+  "header_sig": null,
+  "header_sig_by": null,
+  "header_sig_key": null,
+  "payload": {
+    "alg": "AES-256-GCM",
+    "encoding": "base64+gzip",
+    "iv": "JzbjEM5yfAReVmG3",
+    "ciphertext": "023YNw2etffwY+p1WkC3Uj8GcpLHx0dbiwYaJp4n8oBYOQYGjY+0X1hLhOpJnsNej35+kNp5IhXJTeRSf98AOY6aQiwKdHaaZtqkUio95pyjWH8wJAWYbh5YSROF5aQjH+Kh7RvTnU5NxgFrSZ/FuumevEf1kWzUK1VskFVxPJYXOfYOk3SHsA7M+dfV2Sr/4sPvRJH6eTi6E9vyCWqNYekeddgj"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "cd_pubkey": "2.0",
+  "label": "Mallory",
+  "fingerprint": "425f2c9a0c017fa6",
+  "method": "ecdh-p256",
+  "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErpwnqxJ7gZT8X/KPcfdn4fM/znuz+m/x4u3vAXuIfmr7hs5wbvFsjWUqN4bE04ccG/K5qVr34f7KaS+2L67Chg=="
+}

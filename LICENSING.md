@@ -44,7 +44,36 @@ If you cannot or will not publish your modifications under those terms — the
 usual case for a proprietary product or a closed hosted service — you need a
 **commercial license**.
 
-## 3. Commercial licensing
+## 3. The Python implementation and conformance suite — Apache-2.0
+
+`impl/python/` and `conformance/` are licensed under the **Apache License 2.0**
+([`impl/python/LICENSE`](impl/python/LICENSE),
+[`conformance/LICENSE`](conformance/LICENSE)) — **not** the AGPL that covers the
+rest of this repository.
+
+This is deliberate, and it follows directly from §1. A format that is free to
+implement is not actually free to implement if the only way to check your
+implementation is against copyleft code. The conformance vectors have to be
+usable inside a proprietary product, or they test nothing that matters; and a
+reader library nobody can embed is a library, not a format.
+
+So these two directories are permissive on purpose:
+
+- **`conformance/`** — shared test keys and captured `.cell` vectors, with the
+  generators that produced them. Use them to validate any implementation, in any
+  language, under any license.
+- **`impl/python/`** — a second, independent implementation written from
+  `docs/SPEC.md`. Embed it, fork it, ship it in a closed product; the Apache
+  license asks only for attribution and the patent grant it carries.
+
+The AGPL in [`LICENSE`](LICENSE) continues to cover `cell-crypto.js`,
+`index.html`, `server.js` and the rest of the reference implementation. Two
+licenses in one repository is a thing to be explicit about rather than clever
+about: **if a file is under `impl/python/` or `conformance/`, it is Apache-2.0;
+otherwise it is AGPL-3.0.** Every source file carries an `SPDX-License-Identifier`
+line stating which.
+
+## 4. Commercial licensing
 
 A commercial license removes the AGPL's source-disclosure obligations for your
 product, on negotiated terms.
@@ -54,7 +83,7 @@ product, on negotiated terms.
 As sole copyright holder, Enthropic Data can license the same code under other
 terms; the AGPL grant here does not restrict that.
 
-## 4. Improvements
+## 5. Improvements
 
 The intent of this project is that improvements to the reference implementation
 come back to it, so that everyone relying on the format benefits from review of
@@ -74,7 +103,7 @@ If upstream contribution is to be a hard requirement rather than an expectation,
 that belongs in a commercial agreement or a contributor license agreement, not
 in the AGPL. **No CLA is in force today.**
 
-## 5. Related repositories
+## 6. Related repositories
 
 `cd-cert-broker` and the server-backed `cellular-defense` application are
 separate works under separate terms; neither carries a license file at the time

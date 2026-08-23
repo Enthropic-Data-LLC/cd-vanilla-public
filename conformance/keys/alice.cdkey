@@ -1,0 +1,11 @@
+{
+  "cd_key": "2.0",
+  "keyId": "conformance-alice",
+  "label": "Alice",
+  "method": "ecdh-p256",
+  "fingerprint": "97017b8bf3caab2d",
+  "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEuAybwTrATn644nzNpNuxJYRkB00P+lbh6qF5WP4QShNwvCuYf5uvfbzcM9eZzJBru+Dwn3OvDilgpUNu/0TfkQ==",
+  "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg5U9udJCyrnJySgnEqde9cnEOHFaWn3AjI76UM4/BukyhRANCAAS4DJvBOsBOfrjifM2k27ElhGQHTQ/6VuHqoXlY/hBKE3C8K5h/m699vNwz15nMkGu74PCfc68OKWClQ27/RN+R",
+  "created_at": 0,
+  "exported_at": 0
+}

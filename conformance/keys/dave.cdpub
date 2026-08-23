@@ -1,0 +1,7 @@
+{
+  "cd_pubkey": "2.0",
+  "label": "Dave",
+  "fingerprint": "6574194ee815c0f2",
+  "method": "ecdh-p256",
+  "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEiZuJA0HRaUQc/yGy1T7IuqBY7SWrVkMGkB3Bw5dmD9UsXTpJD3sHD2WG4NWpkhYn8cOQiw40guxYFyKByiXl5w=="
+}

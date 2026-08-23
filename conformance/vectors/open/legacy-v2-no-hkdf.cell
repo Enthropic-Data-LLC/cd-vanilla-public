@@ -1,0 +1,22 @@
+{
+  "cd_version": "2.0",
+  "doc_id": "legacy-conformance-0001",
+  "created_at": 1787500000,
+  "original_filename": "deal.txt",
+  "content_type": "text/plain",
+  "recipients": [
+    {
+      "method": "ecdh-p256",
+      "label": "Alice",
+      "fingerprint": "97017b8bf3caab2d",
+      "wrapped_cek": {
+        "eph_spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+GjNjlMFWswDcJP3PafmfAF8EXqBZt+YExW6rjXl7MlsCOfh1s2sUzvZ4NO2P90H4Gwzh0wAimY3fJrzLhfBtQ==",
+        "ct": "ddzgYgXOgPI4IHWKM7i0/E2I/u8xqtdyP03wapmx+DiJwxwGqTIVlg=="
+      }
+    }
+  ],
+  "encrypted_body": {
+    "iv": "nboulicCADaWGCvw",
+    "ciphertext": "7aq+1KqYbiN0ZYEw2M/EBACauxLlr/TVn8vKbaVa+NDBjtBryoCqW8ZR+cbAoE0O4v0OGTpU2rwTroAY5UDmHLfqZ657OR+jhKATs2gRBx8HLfN1H91n5veDBDNdNEnzNXZ+tzl/qm5UemlkUgLgGXngPA=="
+  }
+}
