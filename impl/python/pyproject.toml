@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cellular-defense"
+version = "0.1.0"
+description = "Python implementation of the Cellular Defense .cell encrypted document format (spec v1.3)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Enthropic Data LLC", email = "hello@enthropicdata.com" }]
+keywords = ["encryption", "cell", "aes-gcm", "ecdh", "shamir", "zero-knowledge"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Topic :: Security :: Cryptography",
+]
+dependencies = ["cryptography>=42.0"]
+
+[project.urls]
+Specification = "https://github.com/sohocs509/cd-vanilla/blob/master/docs/SPEC.md"
+
+[project.scripts]
+cdcell = "cellular_defense.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["cellular_defense*"]
+
+[tool.setuptools.package-data]
+cellular_defense = ["py.typed"]

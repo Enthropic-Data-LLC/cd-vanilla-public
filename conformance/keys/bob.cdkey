@@ -1,0 +1,11 @@
+{
+  "cd_key": "2.0",
+  "keyId": "conformance-bob",
+  "label": "Bob",
+  "method": "ecdh-p256",
+  "fingerprint": "aff6a52990ce2335",
+  "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEN2ea6z0faxGGefiv1IAc8DKLXz9hGSTnDJqb/hNuuE/SpjS2bKhC+gBs3IJYG9t0QDvL2ipnDAMC+5iGwhhN6w==",
+  "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgQ9w1VPsF14w2DzQgwzNW1lPzmdg3EKCx5U29aprDfHahRANCAAQ3Z5rrPR9rEYZ5+K/UgBzwMotfP2EZJOcMmpv+E264T9KmNLZsqEL6AGzcglgb23RAO8vaKmcMAwL7mIbCGE3r",
+  "created_at": 0,
+  "exported_at": 0
+}

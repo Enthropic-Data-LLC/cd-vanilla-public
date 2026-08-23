@@ -1,0 +1,7 @@
+{
+  "cd_pubkey": "2.0",
+  "label": "Carol",
+  "fingerprint": "e3acafc957ac89fb",
+  "method": "ecdh-p256",
+  "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEulzcUdOlKS/3fLc0MMnw7JEM89xBWtApF65i/0I65Ru8hzSq6ziDkA3nUw7Ltm+g9kOFbFmQufJJggr8xq1EBQ=="
+}

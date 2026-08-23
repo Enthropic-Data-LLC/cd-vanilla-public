@@ -45,7 +45,14 @@ docs/defensive-pub/anchors/      — the anchored v1.2 bytes + Bitcoin timestamp
 tests/test.html     — browser test suite (51 tests, loads the library in a page)
 tests/run.mjs       — headless runner for the same tests: npm test
 tools/verify-cell.py — independent verifier, written from SPEC.md, no project code
+
+impl/python/        — second implementation, in Python (Apache-2.0, pip-installable)
+conformance/        — shared test keys and .cell vectors for ANY implementation
 ```
+
+The last two are permissively licensed on purpose — see
+[`LICENSING.md`](LICENSING.md) §3. A format is only freely implementable if the
+means of checking your implementation is freely usable too.
 
 ## Running tests
 
@@ -56,6 +63,28 @@ python3 -m http.server 8080 --bind 0.0.0.0
 # open in browser
 http://localhost:8080/tests/test.html
 ```
+
+### The Python implementation and the conformance suite
+
+```bash
+cd impl/python && python3 -m unittest discover -s tests -t .    # 104 tests
+```
+
+Three things run there, and the middle one is the reason the directory exists:
+
+- the Python library's own tests, including the negative cases;
+- **differential tests against `cell-crypto.js`** — cells sealed in JavaScript
+  are opened in Python and vice versa, and the canonical bytes both
+  implementations hash are compared across 200 randomly generated JSON
+  structures. An implementation can be entirely self-consistent and interoperate
+  with nothing; only cells that cross the boundary prove otherwise;
+- the shared vectors in `conformance/` — 27 cells covering every format version
+  including the superseded ones, both file-carryable access methods, and the
+  refusals: tampered AAD, recomputed `header_hash` over an edited header, version
+  downgrade, DER-encoded signature, short quorum, expired retention.
+
+Both implementations agree on all 27. Node is needed only for the differential
+tests, which skip cleanly without it.
 
 Tests run in-browser. WebCrypto requires `localhost` or HTTPS — plain IP addresses will fail. YubiKey tests are skipped (hardware required, test manually).
 

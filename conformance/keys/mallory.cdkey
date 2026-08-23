@@ -1,0 +1,11 @@
+{
+  "cd_key": "2.0",
+  "keyId": "conformance-mallory",
+  "label": "Mallory",
+  "method": "ecdh-p256",
+  "fingerprint": "425f2c9a0c017fa6",
+  "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErpwnqxJ7gZT8X/KPcfdn4fM/znuz+m/x4u3vAXuIfmr7hs5wbvFsjWUqN4bE04ccG/K5qVr34f7KaS+2L67Chg==",
+  "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQggsSC9EOc7mOvZ/pCPsuj0Ydrx1vAZWFe7jCzmEJMRvmhRANCAASunCerEnuBlPxf8o9x92fh8z/Oe7P6b/Hi7e8Be4h+avuGznBu8WyNZSo3hsTThxwb8rmpWvfh/sppL7YvrsKG",
+  "created_at": 0,
+  "exported_at": 0
+}

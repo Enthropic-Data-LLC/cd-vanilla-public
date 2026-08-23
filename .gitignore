@@ -10,3 +10,21 @@ node_modules/
 # publication — fixed content, keys generated at mint time, nothing personal.
 # Regenerate with: node tools/make-figure-cells.mjs
 !docs/figure-data/*.cell
+
+# Conformance material is deliberately tracked, for the same reason the figure
+# data above is: a vector nobody can fetch is not a vector, and published test
+# keys are published on purpose. The blanket *.cell / *.cdkey rules above exist
+# to stop real cells and real private keys being committed by accident, which
+# they still do everywhere else in the tree.
+!conformance/keys/*.cdkey
+!conformance/keys/*.cdpub
+!conformance/vectors/open/*.cell
+!conformance/vectors/reject/*.cell
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/

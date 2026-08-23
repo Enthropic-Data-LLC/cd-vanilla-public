@@ -1,0 +1,27 @@
+{
+  "note": "PUBLISHED TEST KEYS. The private keys are in this repository and derived from a documented string. They protect nothing. Never use them for anything real.",
+  "derivation": "d = SHA-256(\"cellular-defense conformance key v1: \" + label) mod n, P-256",
+  "passphrase": "conformance-test-passphrase",
+  "keys": {
+    "alice": {
+      "fingerprint": "97017b8bf3caab2d",
+      "purpose": "Alice \u2014 primary recipient in most single-recipient vectors"
+    },
+    "bob": {
+      "fingerprint": "aff6a52990ce2335",
+      "purpose": "Bob \u2014 second recipient; also the signer in signed-cell vectors"
+    },
+    "carol": {
+      "fingerprint": "e3acafc957ac89fb",
+      "purpose": "Carol \u2014 third recipient, used for quorum vectors"
+    },
+    "dave": {
+      "fingerprint": "6574194ee815c0f2",
+      "purpose": "Dave \u2014 fourth recipient, used for 3-of-4 quorum vectors"
+    },
+    "mallory": {
+      "fingerprint": "425f2c9a0c017fa6",
+      "purpose": "Mallory \u2014 never a recipient; the wrong-key negative case"
+    }
+  }
+}

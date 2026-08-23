@@ -1,0 +1,7 @@
+{
+  "cd_pubkey": "2.0",
+  "label": "Alice",
+  "fingerprint": "97017b8bf3caab2d",
+  "method": "ecdh-p256",
+  "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEuAybwTrATn644nzNpNuxJYRkB00P+lbh6qF5WP4QShNwvCuYf5uvfbzcM9eZzJBru+Dwn3OvDilgpUNu/0TfkQ=="
+}

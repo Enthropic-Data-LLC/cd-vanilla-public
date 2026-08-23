@@ -1,0 +1,7 @@
+{
+  "cd_pubkey": "2.0",
+  "label": "Bob",
+  "fingerprint": "aff6a52990ce2335",
+  "method": "ecdh-p256",
+  "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEN2ea6z0faxGGefiv1IAc8DKLXz9hGSTnDJqb/hNuuE/SpjS2bKhC+gBs3IJYG9t0QDvL2ipnDAMC+5iGwhhN6w=="
+}

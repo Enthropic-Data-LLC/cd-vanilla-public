@@ -1,0 +1,11 @@
+{
+  "cd_key": "2.0",
+  "keyId": "conformance-carol",
+  "label": "Carol",
+  "method": "ecdh-p256",
+  "fingerprint": "e3acafc957ac89fb",
+  "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEulzcUdOlKS/3fLc0MMnw7JEM89xBWtApF65i/0I65Ru8hzSq6ziDkA3nUw7Ltm+g9kOFbFmQufJJggr8xq1EBQ==",
+  "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgZ1usDL/bsV71l5YSKS5t1zkdjwwqJH+LVBZI/goofLqhRANCAAS6XNxR06UpL/d8tzQwyfDskQzz3EFa0CkXrmL/QjrlG7yHNKrrOIOQDedTDsu2b6D2Q4VsWZC58kmCCvzGrUQF",
+  "created_at": 0,
+  "exported_at": 0
+}

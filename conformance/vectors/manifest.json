@@ -1,0 +1,589 @@
+{
+  "version": 1,
+  "spec": "1.3",
+  "generated_by": "conformance/make-vectors.py",
+  "keys_dir": "../keys",
+  "passphrase": "conformance-test-passphrase",
+  "reject_reasons": [
+    "header-hash-missing",
+    "header-hash-mismatch",
+    "payload-hash-mismatch",
+    "signature-invalid",
+    "signature-der-encoded",
+    "aad-mismatch",
+    "unsupported-version",
+    "quorum-not-met",
+    "no-matching-key",
+    "retention-expired",
+    "timed-release-locked"
+  ],
+  "vectors": [
+    {
+      "id": "v13-ecdh-single",
+      "file": "open/v13-ecdh-single.cell",
+      "description": "v1.3, one ECDH recipient, unsigned",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "must_not_open_with": {
+        "keys": [
+          "mallory"
+        ]
+      }
+    },
+    {
+      "id": "v13-ecdh-signed",
+      "file": "open/v13-ecdh-signed.cell",
+      "description": "v1.3, ECDH recipient, signed by bob, sender-defined meta inside the ciphertext",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "meta": {
+        "case": "2026-0417"
+      },
+      "signer": "bob",
+      "must_not_open_with": {
+        "keys": [
+          "mallory"
+        ]
+      },
+      "notes": "An opener that requires authorship must compare the verified key fingerprint against bob's; header_sig_by is self-asserted (§4.1)."
+    },
+    {
+      "id": "v13-pbkdf2",
+      "file": "open/v13-pbkdf2.cell",
+      "description": "v1.3, passphrase entry, PBKDF2-SHA256 600,000 iterations",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "passphrases": [
+          "conformance-test-passphrase"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "must_not_open_with": {
+        "keys": [
+          "mallory"
+        ]
+      }
+    },
+    {
+      "id": "v13-multi-recipient",
+      "file": "open/v13-multi-recipient.cell",
+      "description": "v1.3, four entries at threshold 1 — each opens the cell independently",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ],
+        "also_opens_with": [
+          {
+            "keys": [
+              "bob"
+            ]
+          },
+          {
+            "keys": [
+              "carol"
+            ]
+          },
+          {
+            "passphrases": [
+              "conformance-test-passphrase"
+            ]
+          }
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "must_not_open_with": {
+        "keys": [
+          "mallory"
+        ]
+      },
+      "notes": "share_index is absent from every entry (§6.4): omitted, not null."
+    },
+    {
+      "id": "v13-quorum-3of4",
+      "file": "open/v13-quorum-3of4.cell",
+      "description": "v1.3, 3-of-4 Shamir quorum over GF(256)",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice",
+          "bob",
+          "carol"
+        ],
+        "also_opens_with": [
+          {
+            "keys": [
+              "carol",
+              "dave",
+              "alice"
+            ]
+          },
+          {
+            "keys": [
+              "bob",
+              "carol",
+              "dave"
+            ]
+          }
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "must_not_open_with": {
+        "keys": [
+          "alice",
+          "bob"
+        ]
+      },
+      "notes": "share_index carries the x-coordinate 1..4. Fewer than 3 shares reveal nothing information-theoretically (§16)."
+    },
+    {
+      "id": "v13-quorum-2of3-mixed",
+      "file": "open/v13-quorum-2of3-mixed.cell",
+      "description": "v1.3, 2-of-3 quorum mixing ECDH shares with a passphrase share",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ],
+        "passphrases": [
+          "conformance-test-passphrase"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "must_not_open_with": {
+        "keys": [
+          "alice"
+        ]
+      }
+    },
+    {
+      "id": "v13-empty-payload",
+      "file": "open/v13-empty-payload.cell",
+      "description": "v1.3, zero-byte file — the manifest is the whole plaintext",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/empty.bin",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size": 0
+      },
+      "filename": "empty.bin",
+      "content_type": "application/octet-stream"
+    },
+    {
+      "id": "v13-binary-payload",
+      "file": "open/v13-binary-payload.cell",
+      "description": "v1.3, all 256 byte values — catches text-mode handling",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/binary-1024.bin",
+        "sha256": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+        "size": 1024
+      },
+      "filename": "binary-1024.bin",
+      "content_type": "application/octet-stream"
+    },
+    {
+      "id": "v13-unicode-manifest",
+      "file": "open/v13-unicode-manifest.cell",
+      "description": "v1.3, astral filename and non-ASCII meta inside the encrypted manifest",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/unicode.txt",
+        "sha256": "c02c5ad461b0dcb62a7be0d3d22e6292620fccb768e6142f44f04f4190ba3a81",
+        "size": 34
+      },
+      "filename": "rapport-financiér-😀.txt",
+      "content_type": "text/plain",
+      "meta": {
+        "note": "café ☕",
+        "n": 3
+      }
+    },
+    {
+      "id": "v13-lifetime-split",
+      "file": "open/v13-lifetime-split.cell",
+      "description": "v1.3 lifetime split by enforcer — a PASSED disposal date must not block an open",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "notes": "§8.2: disposal describes the operator's retention schedule, not the recipient's permission. An opener that refuses this cell is wrong."
+    },
+    {
+      "id": "v12-ecdh-single",
+      "file": "open/v12-ecdh-single.cell",
+      "description": "v1.2 read path — canonical serialization, flat lifetime (expires_at/on_expiry)",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.2",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain"
+    },
+    {
+      "id": "v11-ecdh-single",
+      "file": "open/v11-ecdh-single.cell",
+      "description": "v1.1 read path — AAD over JSON.stringify; hash over insertion-ordered JSON.stringify",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.1",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "notes": "Key order in this file is significant for 1.0/1.1: they hash the header as written, not canonicalized. Reformatting breaks them, which is exactly why 1.2 introduced canonicalization."
+    },
+    {
+      "id": "v10-ecdh-single",
+      "file": "open/v10-ecdh-single.cell",
+      "description": "v1.0 read path — no AAD at all; hash over insertion-ordered JSON.stringify",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.0",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "notes": "Key order in this file is significant for 1.0/1.1: they hash the header as written, not canonicalized. Reformatting breaks them, which is exactly why 1.2 introduced canonicalization."
+    },
+    {
+      "id": "legacy-v2-no-hkdf",
+      "file": "open/legacy-v2-no-hkdf.cell",
+      "description": "Pre-spec legacy v2.0 — raw ECDH output as the AES-KW key, no HKDF, no header, plaintext filename, no manifest prefix",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "2.0",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "notes": "Read-only. No conforming writer may produce this shape (§12)."
+    },
+    {
+      "id": "reject-header-hash-missing",
+      "file": "reject/reject-header-hash-missing.cell",
+      "description": "header_hash deleted — absence is a rejection, not licence to skip §10",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "header-hash-missing",
+      "reject_at_step": 1,
+      "notes": "Guarding the integrity block on header_hash's own presence would let deleting one field disable the header, ciphertext and signature checks together (§4.1)."
+    },
+    {
+      "id": "reject-header-hash-mismatch",
+      "file": "reject/reject-header-hash-mismatch.cell",
+      "description": "header edited without recomputing header_hash",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "header-hash-mismatch",
+      "reject_at_step": 1
+    },
+    {
+      "id": "reject-payload-hash-mismatch",
+      "file": "reject/reject-payload-hash-mismatch.cell",
+      "description": "ciphertext flipped by one bit; payload_hash in the header no longer matches",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "payload-hash-mismatch",
+      "reject_at_step": 2
+    },
+    {
+      "id": "reject-signature-invalid",
+      "file": "reject/reject-signature-invalid.cell",
+      "description": "header_sig corrupted",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "signature-invalid",
+      "reject_at_step": 3
+    },
+    {
+      "id": "reject-signature-der",
+      "file": "reject/reject-signature-der.cell",
+      "description": "header_sig re-encoded as DER — the named trap of §4.1",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "signature-der-encoded",
+      "reject_at_step": 3,
+      "notes": "OpenSSL, Java, Go and python-cryptography all produce DER by default. The format requires raw 64-byte r||s (IEEE P1363). An implementation that accepts DER here interoperates with nothing."
+    },
+    {
+      "id": "reject-forged-access-map",
+      "file": "reject/reject-forged-access-map.cell",
+      "description": "access_map swapped for one addressed to dave, header_hash recomputed",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "dave"
+        ]
+      },
+      "reject_reason": "signature-invalid",
+      "reject_at_step": 3,
+      "notes": "access_map is not in the AAD (it does not exist at encryption time), so header_hash covers it — and an attacker who recomputes that unkeyed hash is caught by the signature. On an UNSIGNED cell this substitution is detected only when the GCM tag fails at step 4."
+    },
+    {
+      "id": "reject-tampered-aad",
+      "file": "reject/reject-tampered-aad.cell",
+      "description": "AAD-bound policy edited AND header_hash recomputed — steps 1-3 all pass",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "aad-mismatch",
+      "reject_at_step": 4,
+      "notes": "The cell is internally consistent. Only the AES-GCM tag catches this, which is the whole point of §4.4: metadata tampering is not strippable."
+    },
+    {
+      "id": "reject-version-downgrade",
+      "file": "reject/reject-version-downgrade.cell",
+      "description": "version rewritten to 1.0 to strip the AAD from the decrypt",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.0",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "aad-mismatch",
+      "reject_at_step": 4,
+      "notes": "The ciphertext was produced WITH AAD, so decrypting without it fails the tag. An attacker cannot re-encrypt without the CEK (§4.4)."
+    },
+    {
+      "id": "reject-unsupported-version",
+      "file": "reject/reject-unsupported-version.cell",
+      "description": "version not in SUPPORTED_VERSIONS",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "9.9",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "unsupported-version",
+      "reject_at_step": 0
+    },
+    {
+      "id": "reject-quorum-short",
+      "file": "reject/reject-quorum-short.cell",
+      "description": "valid 3-of-4 quorum opened with only two shares",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice",
+          "bob"
+        ]
+      },
+      "reject_reason": "quorum-not-met",
+      "reject_at_step": 4
+    },
+    {
+      "id": "reject-wrong-key",
+      "file": "reject/reject-wrong-key.cell",
+      "description": "valid cell, key that is not a recipient",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "mallory"
+        ]
+      },
+      "reject_reason": "no-matching-key",
+      "reject_at_step": 4
+    },
+    {
+      "id": "reject-retention-expired",
+      "file": "reject/reject-retention-expired.cell",
+      "description": "advisory.retain_until in the past — conforming software refuses",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "retention-expired",
+      "reject_at_step": 0,
+      "notes": "ADVISORY ONLY (§8.1). A keyholder can bypass this and the specification says so; an implementation offering an explicit override is conforming, and its DEFAULT must still be to refuse."
+    },
+    {
+      "id": "reject-timed-release-locked",
+      "file": "reject/reject-timed-release-locked.cell",
+      "description": "timed_release with release_at in the future",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "timed-release-locked",
+      "reject_at_step": 0,
+      "notes": "Same advisory caveat as reject-retention-expired. Evaluated against the wall clock: this vector expires as a test on 2100-01-01."
+    }
+  ]
+}
