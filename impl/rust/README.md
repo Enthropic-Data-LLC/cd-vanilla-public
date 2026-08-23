@@ -13,40 +13,113 @@ cellular-defense = { path = "impl/rust" }
 Builds on Rust 1.85 (what Debian trixie packages). Dependencies are RustCrypto
 plus `flate2` and `serde_json`.
 
-## Library
+## Encrypt
 
 ```rust
-use cellular_defense::cell::{create, open, CreateOptions, OpenOptions, Recipient};
+use cellular_defense::cell::{create, CreateOptions, Recipient};
 use cellular_defense::keys::KeyRecord;
+use serde_json::Value;
+use std::fs;
 
-let alice = KeyRecord::generate("Alice");
-let bob = KeyRecord::generate("Bob");
+// The recipient's public key. They generated it with `cdcell keygen` and sent
+// you the .cdpub; you never see their private key.
+let pub_doc: Value = serde_json::from_slice(&fs::read("alice.cdpub")?)?;
+let alice = KeyRecord::from_cdpub(&pub_doc)?;
+
+// Your own key, used to sign the header so Alice can confirm you sealed it.
+let key_doc: Value = serde_json::from_slice(&fs::read("me.cdkey")?)?;
+let me = KeyRecord::from_cdkey(&key_doc)?;
 
 let sealed = create(
-    b"quarterly numbers",
-    "q3.txt",
-    &[Recipient::for_key(&alice)?, Recipient::for_key(&bob)?],
+    &fs::read("q3-results.pdf")?,
+    "q3-results.pdf",
+    &[Recipient::for_key(&alice)?],
     &CreateOptions {
-        threshold: 2,                       // 2-of-2 Shamir quorum
-        sender: Some(alice.clone()),        // adds an ECDSA header signature
+        content_type: Some("application/pdf".into()),
+        sender: Some(me),                                  // optional signature
+        meta: Some(serde_json::json!({"case": "2026-0417"})), // INSIDE the ciphertext
         ..Default::default()
     },
 )?;
 
-let result = open(&sealed, &OpenOptions {
-    keys: vec![alice.clone(), bob.clone()],
-    expected_signer: Some(alice.fingerprint()?),  // authorship, against a known key
-    ..Default::default()
-})?;
-assert_eq!(result.data, b"quarterly numbers");
+fs::write("q3-results.cell", serde_json::to_string_pretty(&sealed)?)?;
 ```
 
-`verify(&cell, None)` checks the audit chain with no key material at all.
+The filename, media type, size and `meta` are all encrypted: an observer of the
+stored cell sees none of them (§5).
 
-Errors are a single enum with meaningful variants — `Integrity`, `Signature`,
-`Decryption`, `NoMatchingKey`, `QuorumNotMet`, `Lifetime`, `UnsupportedVersion`,
-`Malformed`, `Canonicalization`. The distinctions matter: "this cell was
-tampered with" and "you gave me the wrong key" call for different responses.
+**Several recipients, any one of whom can open it:**
+
+```rust
+let recipients = [
+    Recipient::for_key(&alice)?,
+    Recipient::for_key(&bob)?,
+    Recipient::passphrase("break glass in emergency", ""),
+];
+let sealed = create(&data, "q3-results.pdf", &recipients, &CreateOptions::default())?;
+```
+
+**A quorum — two of the three together, and no fewer:**
+
+```rust
+let sealed = create(&data, "q3-results.pdf", &recipients,
+    &CreateOptions { threshold: 2, ..Default::default() })?;  // Shamir, §7
+```
+
+## Decrypt
+
+```rust
+use cellular_defense::cell::{open, OpenOptions};
+
+let key_doc: Value = serde_json::from_slice(&fs::read("me.cdkey")?)?;
+let me = KeyRecord::from_cdkey(&key_doc)?;
+let sealed: Value = serde_json::from_slice(&fs::read("q3-results.cell")?)?;
+
+let result = open(&sealed, &OpenOptions {
+    keys: vec![me],
+    // Optional but recommended: a fingerprint you learned out of band. Without
+    // it, "opened without error" is NOT evidence of who sealed the cell — a
+    // signature can be stripped undetectably (§4.1).
+    expected_signer: Some("aff6a52990ce2335".into()),
+    ..Default::default()
+})?;
+
+fs::write(&result.filename, &result.data)?;
+println!("{} {} {:?}", result.filename, result.content_type, result.meta);
+println!("signed by {:?}", result.signer_fingerprint);
+```
+
+Set `passphrases` for a passphrase entry, and pass several keys at once for a
+quorum — `open` collects shares until it has enough.
+
+**Handling failure**, which is most of what an opener does:
+
+```rust
+use cellular_defense::error::Error;
+
+match open(&sealed, &opts) {
+    Ok(result) => { /* ... */ }
+    Err(Error::Integrity(_))  => {} // header_hash/payload_hash mismatch — altered
+    Err(Error::Signature(_))  => {} // signature invalid, or not the expected signer
+    Err(Error::Decryption)    => {} // GCM tag failed — ciphertext or AAD tampered
+    Err(Error::QuorumNotMet { needed, unlocked }) => {} // not enough shares
+    Err(Error::NoMatchingKey) => {} // nothing supplied fits any access-map entry
+    Err(Error::Lifetime(_))   => {} // advisory gate: expired, or still locked
+    Err(e) => return Err(e.into()),
+}
+```
+
+## Verify without any key
+
+```rust
+use cellular_defense::cell::verify;
+
+let report = verify(&sealed, None)?;      // Err on tampering
+println!("{} {:?}", report.signed, report.signer_fingerprint);
+```
+
+Any third party can confirm a cell has not been altered since it was sealed —
+without being able to read it. That is the property the whole format rests on.
 
 ## CLI
 
@@ -123,5 +196,7 @@ for a workaround that isn't needed:
 - **`p256::ecdsa::Signature` is already the fixed 64-byte `r ‖ s` form** the
   format requires. The DER trap that §4.1 names the most likely point of failure
   outside a browser simply never arises — producing DER would take a deliberate
-  `to_der()` call. Go, Java, OpenSSL and python-cryptography all default the
-  other way.
+  `to_der()` call. Elsewhere it is either the default (OpenSSL,
+  python-cryptography, Java's plain `SHA256withECDSA`) or one keystroke away:
+  Go's `ecdsa.Sign` gives `r, s` directly, but `ecdsa.SignASN1` sits right next
+  to it and gives DER.

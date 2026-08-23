@@ -16,27 +16,117 @@ pip install -e .
 Requires Python 3.10+ and [`cryptography`](https://cryptography.io). The test
 suite uses only the standard library.
 
-## Library
+## Encrypt
 
 ```python
-from cellular_defense import KeyRecord, Recipient, cell_create, cell_open, verify_cell
+import json
+from pathlib import Path
+from cellular_defense import KeyRecord, Recipient, cell_create
 
-alice = KeyRecord.generate("Alice")
-bob   = KeyRecord.generate("Bob")
+# The recipient's public key. They generated it with `cdcell keygen` and sent
+# you the .cdpub; you never see their private key.
+alice = KeyRecord.from_cdpub(json.loads(Path("alice.cdpub").read_text()))
+
+# Your own key, used to sign the header so Alice can confirm you sealed it.
+me = KeyRecord.from_cdkey(json.loads(Path("me.cdkey").read_text()))
 
 cell = cell_create(
-    b"quarterly numbers",
-    "q3.txt",
-    [Recipient.for_key(alice), Recipient.for_key(bob), Recipient.passphrase_("break glass")],
-    threshold=2,                 # 2-of-3 Shamir quorum
-    sender=alice,                # adds an ECDSA header signature
-    meta={"case": "2026-0417"},  # sender-defined, carried INSIDE the ciphertext
+    Path("q3-results.pdf").read_bytes(),
+    "q3-results.pdf",
+    [Recipient.for_key(alice)],
+    content_type="application/pdf",
+    sender=me,                          # optional ECDSA header signature
+    meta={"case": "2026-0417"},         # sender-defined, INSIDE the ciphertext
 )
 
-verify_cell(cell)                # audit chain — no key material needed
-result = cell_open(cell, keys=[alice, bob])
-result.data                      # b"quarterly numbers"
+Path("q3-results.cell").write_text(json.dumps(cell, indent=2))
 ```
+
+The filename, media type, size and `meta` are all encrypted: an observer of the
+stored cell sees none of them (§5).
+
+**Several recipients, any one of whom can open it:**
+
+```python
+cell = cell_create(data, "q3-results.pdf", [
+    Recipient.for_key(alice),
+    Recipient.for_key(bob),
+    Recipient.passphrase_("break glass in emergency"),
+])
+```
+
+**A quorum — two of the three together, and no fewer:**
+
+```python
+cell = cell_create(data, "q3-results.pdf",
+                   [Recipient.for_key(alice), Recipient.for_key(bob),
+                    Recipient.passphrase_("break glass in emergency")],
+                   threshold=2)        # Shamir split over GF(256), §7
+```
+
+## Decrypt
+
+```python
+import json
+from pathlib import Path
+from cellular_defense import KeyRecord, cell_open
+
+me = KeyRecord.from_cdkey(json.loads(Path("me.cdkey").read_text()))
+cell = json.loads(Path("q3-results.cell").read_text())
+
+result = cell_open(
+    cell,
+    keys=[me],
+    # Optional but recommended: a fingerprint you learned out of band. Without
+    # it, "opened without error" is NOT evidence of who sealed the cell — a
+    # signature can be stripped undetectably (§4.1).
+    expected_signer="aff6a52990ce2335",
+)
+
+Path(result.filename).write_bytes(result.data)
+print(result.filename, result.content_type, result.meta)
+print("signed by", result.signer_fingerprint)
+```
+
+Pass `passphrases=["break glass in emergency"]` for a passphrase entry, and
+several keys at once for a quorum — `cell_open` collects shares until it has
+enough.
+
+**Handling failure**, which is most of what an opener does:
+
+```python
+from cellular_defense import (
+    DecryptionError, IntegrityError, LifetimeError,
+    NoMatchingKeyError, QuorumNotMetError, SignatureError,
+)
+
+try:
+    result = cell_open(cell, keys=[me])
+except IntegrityError:
+    ...   # header_hash or payload_hash mismatch — the cell was altered
+except SignatureError:
+    ...   # header_sig present and invalid, or not the expected signer
+except DecryptionError:
+    ...   # AES-GCM tag failed — ciphertext or AAD-bound metadata was tampered
+except QuorumNotMetError:
+    ...   # not enough shares
+except NoMatchingKeyError:
+    ...   # none of the supplied material fits any access-map entry
+except LifetimeError:
+    ...   # advisory gate: retention expired, or a timed release is still locked
+```
+
+## Verify without any key
+
+```python
+from cellular_defense import verify_cell
+
+report = verify_cell(cell)          # raises on tampering
+report.signed, report.signer_fingerprint
+```
+
+Any third party can confirm a cell has not been altered since it was sealed —
+without being able to read it. That is the property the whole format rests on.
 
 ## CLI
 
