@@ -132,6 +132,31 @@ canonicalize(v):
 
 This mirrors `JSON.stringify`'s primitive encoding and string escaping; the only differences are recursively sorted keys and no insignificant whitespace. v1.0/v1.1 cells continue to be verified with their original `JSON.stringify` serialization for backward compatibility (§12).
 
+Deferring to `JSON.stringify` is exact but not self-contained, and the four rules it silently imports are where independent implementations diverge. They are stated here normatively, because each of them changes the hashed bytes and none of them is the default behaviour of a general-purpose JSON encoder outside JavaScript.
+
+**Numbers.** JSON has no integer type: every number is an IEEE-754 binary64. A serializer MUST convert a value to binary64 *before* formatting it, and MUST then format it exactly as ECMA-262 6.1.6.1.20 (`Number::toString`, radix 10) specifies — the shortest decimal string that round-trips to the same binary64, with no trailing `.0`, positional form when the decimal exponent `n` satisfies `-6 < n ≤ 21` and exponential form otherwise, an explicit `+` on a non-negative exponent, and `-0` written as `0`. `NaN` and the infinities cannot appear, JSON having no literals for them.
+
+| Value | Canonical form | A common wrong answer |
+|-------|----------------|-----------------------|
+| `1.0` | `1` | `1.0` |
+| `-0` | `0` | `-0` |
+| `1e20` | `100000000000000000000` | `1e+20`, `1.0E20` |
+| `1e21` | `1e+21` | `1000000000000000000000` |
+| `1e-6` | `0.000001` | `1e-06` |
+| `1e-7` | `1e-7` | `1e-07`, `0.0000001` |
+| `5e-324` | `5e-324` | `4.9e-324` |
+| `9007199254740993` | `9007199254740992` | `9007199254740993` |
+
+The last row is the rule's practical edge: a language with arbitrary-precision integers must round the literal through binary64 and emit the rounded value, because that is what a JavaScript reader will do with the same bytes. Emitting the exact integer produces a serialization no conforming reader can reproduce.
+
+**Key ordering.** Keys sort by **UTF-16 code unit**, which is what `Array.prototype.sort` gives JavaScript — not by Unicode code point, and not by UTF-8 byte. The three orders agree throughout the Basic Multilingual Plane and disagree above it: a character outside the BMP is a surrogate pair in UTF-16 (`U+D800`–`U+DFFF`) and therefore sorts **below** `U+E000`–`U+FFFF`, where code-point and UTF-8 orders both place it above.
+
+**String escaping.** Escape exactly six characters plus the remaining C0 controls: `"` as `\"`, `\` as `\\`, `U+0008` as `\b`, `U+0009` as `\t`, `U+000A` as `\n`, `U+000C` as `\f`, `U+000D` as `\r`, and every other code point below `U+0020` as `\u00xx` with lowercase hex. Everything from `U+0020` upward is emitted literally as UTF-8 — **including `/`, `<`, `>`, `&`, `U+2028` and `U+2029`**. Escaping any of those is a common default: Go's `encoding/json` escapes `<`, `>`, `&` for HTML safety and `U+2028`/`U+2029` even with HTML escaping disabled, and several encoders escape `/`. Every such escape changes the bytes and therefore the hash.
+
+**Key order must survive parsing — v1.0/v1.1 only.** Because those versions serialize the header in its original insertion order (§12), an implementation whose JSON parser stores objects in an unordered or re-sorted map cannot reconstruct the bytes such a cell was signed over, and cannot verify it at all. Verifying v1.0/v1.1 therefore requires an order-preserving parse. v1.2+ sorts the keys itself and has no such requirement.
+
+> **Conformance vectors.** `conformance/vectors/canonical.json` carries input/expected pairs for all of the above, generated from the reference implementation. They need no cryptography and fail loudly, which makes them the cheapest first test for a new implementation: a canonicalization that disagrees produces a `header_hash` that never matches, with nothing in the failure to indicate why.
+
 ### 4.2 Header
 
 ```json
@@ -479,7 +504,7 @@ Policy is enforced by the application layer only; it is not a cryptographic acce
 
 ## 10. Audit Chain
 
-The cell format provides a tamper-evident audit chain. Serialization below is the canonical form (§4.1.1) for v1.2, or `JSON.stringify` for v1.0/v1.1:
+The cell format provides a tamper-evident audit chain. Serialization below is the canonical form (§4.1.1) for v1.2 and v1.3, or `JSON.stringify` for v1.0/v1.1:
 
 ```
 file bytes
@@ -605,7 +630,7 @@ Contains the full key record including private key. Must be stored securely.
 | Document ID | ULID | 48-bit ms timestamp + 80-bit CSPRNG, Crockford base32 |
 | Randomness | `crypto.getRandomValues()` | Browser CSPRNG — never `Math.random()` |
 
-All operations use the **Web Crypto API** (`crypto.subtle`). Requires a secure context (HTTPS or localhost).
+All operations use the **Web Crypto API** (`crypto.subtle`). Requires a secure context — `https://`, `localhost`, or a `file://` document.
 
 ---
 
@@ -645,7 +670,6 @@ A minimal v1.3 cell encrypted for a single ECDH recipient, no quorum, permanent 
         "method": "ecdh-p256",
         "label": "Alice",
         "fingerprint": "a1b2c3d4e5f6a7b8",
-        "share_index": null,
         "wrapped_cek": {
           "eph_spki":  "<base64 — ephemeral public key>",
           "hkdf_salt": "<base64 — 32 random bytes>",
@@ -702,6 +726,8 @@ A minimal v1.3 cell encrypted for a single ECDH recipient, no quorum, permanent 
 | 1.2 (editorial) | 2026-07-19 | Define `minimum_atl` (Access Trust Level, §8) and declare it canonical over the legacy `minimum_etl` field name. No format or wire change. |
 | 1.3 | 2026-08-09 | Split `lifetime` by enforcer into `advisory` (conformance behaviour, not enforced against a keyholder) and `disposal` (operator-side, enforced against anyone without a copy), and rename `expires_at` to `advisory.retain_until` (§8). Motivated by a demonstration that an independent opener written from this specification recovers plaintext from a cell whose expiry has passed: the old flat shape graded an enforced field and an unenforced one identically, and the name "expires" claimed a guarantee the format does not provide. Serialization, AAD construction and all cryptographic primitives are unchanged; `1.0`/`1.1`/`1.2` cells are read under their own rules. See `docs/design/temporal-enforcement.md`. |
 | 1.3 (corrections) | 2026-08-09 | Documentation corrections from an accuracy review that verified every claim against the reference implementation. **No format or wire change; no cell ever written is affected.** (a) Binary fields are **standard base64**, not base64url as stated since v1.0 — the document was wrong, the implementation was always right, and following the old text produced unparseable cells (§4.0). (b) `header_sig` is raw 64-byte `r ‖ s` (IEEE P1363), not DER — previously unstated, and the one gap that defeated an independent spec-only verification (§4.1). (c) `header_hash` is mandatory and its absence is a rejection; previously an opener could treat a missing hash as licence to skip the header, ciphertext and signature checks together (§4.1, §10). (d) Verification order is now normative: integrity precedes all key use (§10). (e) Signature *removal* is documented as undetectable (§4.1, §10). (f) §16 said "N-1 shares reveal nothing" where it meant fewer than M — N-1 is a quorum's worth. (g) `share_index` is omitted, not `null`, on non-quorum cells (§6.4). See `docs/REVIEW-2026-08-09.md`. |
+| 1.3 (corrections 2) | 2026-08-23 | Three documentation corrections, found by a line-by-line review of the specification against itself and against the exposition built on it. **No format or wire change; no cell ever written is affected.** (a) §15's complete example wrote `"share_index": null` on a non-quorum cell, contradicting §6.4 and correction (g) above — the 2026-08-09 correction reached the normative text and missed the example, so the one artifact an implementer is most likely to copy still demonstrated the discouraged form. Example corrected to omit the key. (b) §10 gave the canonical serialization as applying to "v1.2", omitting v1.3, which §4.1.1 and §12 both place in `CANONICAL_VERSIONS`. (c) §14 gave the secure-context requirement as "HTTPS or localhost", omitting `file://` — a legitimate secure context and the one the offline, air-gapped sealing path depends on. |
+| 1.3 (corrections 3) | 2026-08-23 | §4.1.1 made self-contained. **No format or wire change; no cell ever written is affected, and the reference implementation is unmodified.** The canonical serialization was defined by deferring to JavaScript's `JSON.stringify`, which is exact but silently imports four rules that are not the default behaviour of a JSON encoder in any other language: binary64 number formatting per ECMA-262 `Number::toString`, UTF-16 code-unit key ordering, the precise escape set (notably that `/`, `<`, `>`, `&`, `U+2028` and `U+2029` are **not** escaped), and — for v1.0/v1.1 only — the requirement that a parser preserve object key order at all. Each is now stated normatively with a worked table, because each independently produced a `header_hash` that never matched during the Python, Go, Rust and Java ports, and the failure carries no indication of its cause. Machine-checkable vectors accompany them at `conformance/vectors/canonical.json`. |
 
 ---
 
