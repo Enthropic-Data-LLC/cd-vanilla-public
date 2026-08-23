@@ -7,10 +7,14 @@ consistently but differently from the reference passes every self-test and
 verifies no real cell. These tests pin the exact output bytes.
 """
 
+import json
 import unittest
+from pathlib import Path
 
 from cellular_defense.canonical import canonicalize, js_number
 from cellular_defense.errors import CanonicalizationError
+
+VECTORS = Path(__file__).resolve().parents[3] / "conformance" / "vectors" / "canonical.json"
 
 
 class TestJsNumber(unittest.TestCase):
@@ -32,13 +36,25 @@ class TestJsNumber(unittest.TestCase):
         self.assertEqual(js_number(5e-324), "5e-324")
         self.assertEqual(js_number(1.7976931348623157e308), "1.7976931348623157e+308")
 
-    def test_unsafe_integers_are_refused_not_guessed(self):
-        # JS would round this to a different value and compute a different
-        # header_hash. Emitting bytes no conforming reader can reproduce is worse
-        # than refusing.
-        with self.assertRaises(CanonicalizationError):
-            js_number(2**60)
-        self.assertEqual(js_number(2**53 - 1), "9007199254740991")
+    def test_integers_beyond_2_53_round_the_way_javascript_does(self):
+        # JavaScript has no integers. It parses such a literal into the nearest
+        # float64 and prints that back, so agreeing with the reference means
+        # rounding identically — not refusing. This implementation raised here
+        # until the Go port ran the shared canonical vectors and hit the
+        # reference's own output for 1e20.
+        self.assertEqual(js_number(2**53 - 1), "9007199254740991")  # exact
+        self.assertEqual(js_number(2**53 + 1), "9007199254740992")  # rounds down
+        self.assertEqual(js_number(10**20), "100000000000000000000")
+        # Shortest round-tripping decimal, not the exact value: at this magnitude
+        # neighbouring float64s are far enough apart that a shorter decimal
+        # identifies the same one. Verified against node: String(2**60).
+        self.assertEqual(js_number(2**60), "1152921504606847000")
+
+    def test_non_finite_values_are_refused(self):
+        # JSON.stringify emits null for these; they must never reach a hash.
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.assertRaises(CanonicalizationError):
+                js_number(value)
 
 
 class TestCanonicalize(unittest.TestCase):
@@ -83,3 +99,23 @@ class TestCanonicalize(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(VECTORS.is_file(), "canonical vectors are not present")
+class TestSharedCanonicalVectors(unittest.TestCase):
+    """The shared vectors in conformance/vectors/canonical.json.
+
+    Their expected strings come from the reference implementation and nowhere
+    else: canonical serialization is defined by deferring to JavaScript's
+    JSON.stringify (§4.1.1), so JavaScript is the authority on the right answer
+    and every other implementation checks itself against it. Every port runs
+    this same file — it is the cheapest way to catch the number-formatting and
+    key-ordering divergences before they turn into a hash that never matches.
+    """
+
+    def test_all_cases(self):
+        data = json.loads(VECTORS.read_text(encoding="utf-8"))
+        self.assertGreater(len(data["cases"]), 0)
+        for case in data["cases"]:
+            with self.subTest(case=case["name"]):
+                self.assertEqual(canonicalize(case["input"]), case["expected"])

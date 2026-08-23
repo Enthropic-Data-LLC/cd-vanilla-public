@@ -43,17 +43,38 @@ Python port — the field names are the spec's, not any one library's.
 ## `vectors/`
 
 27 captured cells — 14 that must open, 13 that must be refused — indexed by
-`vectors/manifest.json`. Both implementations agree on all 27: every open vector
-opens in the JavaScript reference and in the Python port with byte-identical
-plaintext, and every reject vector is refused by both.
+`vectors/manifest.json`, plus 225 canonical-serialization vectors. All three
+implementations agree on all of them: every open vector opens in the JavaScript
+reference, the Python port and the Go port with byte-identical plaintext, and
+every reject vector is refused by all three.
 
 ```
 vectors/
   manifest.json      index — what each cell is, what opens it, what must not
+  canonical.json     225 canonical serialization vectors (§4.1.1)
   open/              cells that must open
   reject/            cells that must be refused
   payloads/          the expected plaintext for each open vector
 ```
+
+### `vectors/canonical.json`
+
+Input/expected pairs for the canonical serialization that `header_hash`,
+`header_sig` and the AES-GCM AAD are computed over. The expected strings come
+from `cell-crypto.js` and nowhere else — §4.1.1 defines the canonical form by
+deferring to JavaScript's `JSON.stringify`, so JavaScript is the authority on
+the right answer and every other implementation checks itself against it.
+
+Run these **first** in a new port. They need no crypto, they fail loudly, and
+they catch the three divergences that otherwise surface as a `header_hash` that
+never matches and no clue why: JavaScript's number formatting (`1.0` prints as
+`1`, `1e-7` stays `1e-7`, integers round to float64 before printing), its
+UTF-16 code-unit key ordering, and the five characters its `JSON.stringify`
+does not escape but most other JSON encoders do (`<`, `>`, `&`, U+2028,
+U+2029).
+
+Regenerate with `./conformance/make-canonical-vectors.sh` (needs node and
+python3). The corpus is fixed-seed, so it reproduces exactly.
 
 ### Coverage
 

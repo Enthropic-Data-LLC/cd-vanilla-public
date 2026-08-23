@@ -44,10 +44,10 @@ If you cannot or will not publish your modifications under those terms — the
 usual case for a proprietary product or a closed hosted service — you need a
 **commercial license**.
 
-## 3. The Python implementation and conformance suite — Apache-2.0
+## 3. The Python and Go implementations, and the conformance suite — Apache-2.0
 
-`impl/python/` and `conformance/` are licensed under the **Apache License 2.0**
-([`impl/python/LICENSE`](impl/python/LICENSE),
+`impl/` and `conformance/` are licensed under the **Apache License 2.0**
+([`impl/python/LICENSE`](impl/python/LICENSE), [`impl/go/LICENSE`](impl/go/LICENSE),
 [`conformance/LICENSE`](conformance/LICENSE)) — **not** the AGPL that covers the
 rest of this repository.
 
@@ -62,14 +62,14 @@ So these two directories are permissive on purpose:
 - **`conformance/`** — shared test keys and captured `.cell` vectors, with the
   generators that produced them. Use them to validate any implementation, in any
   language, under any license.
-- **`impl/python/`** — a second, independent implementation written from
-  `docs/SPEC.md`. Embed it, fork it, ship it in a closed product; the Apache
-  license asks only for attribution and the patent grant it carries.
+- **`impl/python/`** and **`impl/go/`** — independent implementations written
+  from `docs/SPEC.md`. Embed them, fork them, ship them in a closed product; the
+  Apache license asks only for attribution and the patent grant it carries.
 
 The AGPL in [`LICENSE`](LICENSE) continues to cover `cell-crypto.js`,
 `index.html`, `server.js` and the rest of the reference implementation. Two
 licenses in one repository is a thing to be explicit about rather than clever
-about: **if a file is under `impl/python/` or `conformance/`, it is Apache-2.0;
+about: **if a file is under `impl/` or `conformance/`, it is Apache-2.0;
 otherwise it is AGPL-3.0.** Every source file carries an `SPDX-License-Identifier`
 line stating which, and **where a file's SPDX line differs from the positional
 rule, the SPDX line governs.**
@@ -79,7 +79,7 @@ There is exactly one such file today:
 is **AGPL-3.0-only**, because it loads `cell-crypto.js` in order to run cells
 through the reference implementation. It is a test harness, it is needed only to
 run the differential tests, and nothing in the Python library imports it — so the
-Apache grant over `impl/python/` is unaffected by it. It is called out here
+Apache grant over `impl/` is unaffected by it. It is called out here
 rather than quietly filed under the directory rule, because a licence you have
 to infer from a directory path is a licence somebody gets wrong.
 

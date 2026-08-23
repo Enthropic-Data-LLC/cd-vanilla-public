@@ -47,6 +47,7 @@ tests/run.mjs       — headless runner for the same tests: npm test
 tools/verify-cell.py — independent verifier, written from SPEC.md, no project code
 
 impl/python/        — second implementation, in Python (Apache-2.0, pip-installable)
+impl/go/            — third implementation, in Go (Apache-2.0, zero dependencies)
 conformance/        — shared test keys and .cell vectors for ANY implementation
 ```
 
@@ -64,10 +65,11 @@ python3 -m http.server 8080 --bind 0.0.0.0
 http://localhost:8080/tests/test.html
 ```
 
-### The Python implementation and the conformance suite
+### The Python and Go implementations, and the conformance suite
 
 ```bash
-cd impl/python && python3 -m unittest discover -s tests -t .    # 104 tests
+cd impl/python && python3 -m unittest discover -s tests -t .    # 106 tests
+cd impl/go     && go test ./...                                 # needs Go 1.24+
 ```
 
 Three things run there, and the middle one is the reason the directory exists:
@@ -81,10 +83,12 @@ Three things run there, and the middle one is the reason the directory exists:
 - the shared vectors in `conformance/` — 27 cells covering every format version
   including the superseded ones, both file-carryable access methods, and the
   refusals: tampered AAD, recomputed `header_hash` over an edited header, version
-  downgrade, DER-encoded signature, short quorum, expired retention.
+  downgrade, DER-encoded signature, short quorum, expired retention; plus 225
+  canonical-serialization vectors taken from `cell-crypto.js` itself.
 
-Both implementations agree on all 27. Node is needed only for the differential
-tests, which skip cleanly without it.
+All three implementations agree on all of them, and cells cross between them in
+every direction. Node is needed only for the differential tests, which skip
+cleanly without it.
 
 Tests run in-browser. WebCrypto requires `localhost` or HTTPS — plain IP addresses will fail. YubiKey tests are skipped (hardware required, test manually).
 
