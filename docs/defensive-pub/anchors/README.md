@@ -6,12 +6,14 @@ artifacts, kept here so that the priority claims in the defensive disclosure and
 book can be verified **from this directory alone** — no git archaeology, no network, no
 trust in Enthropic Data.
 
-Two revisions are anchored, and they cover different things:
+Several revisions are anchored, and they cover different things:
 
 | Location | Revision | Covers |
 |---|---|---|
 | this directory | v1.2, 2026-07-18 | The envelope, AAD binding, canonical serialization, ECDH→HKDF→AES-KW fan-out, Shamir quorum, audit chain, version gating |
 | [`v1.3/`](v1.3/) | v1.3, 2026-08-09 | The above **plus** the lifetime split by enforcer (`advisory`/`disposal`, `expires_at` → `retain_until`) and the accuracy-review corrections |
+| [`v1.3-corrections-2/`](v1.3-corrections-2/) | v1.3 + corrections 2, 2026-08-23 | Documentation only — no format or wire change. The specification text reproduced in the companion book's Appendix A |
+| [`v1.3-corrections-3/`](v1.3-corrections-3/) | v1.3 + corrections 2 and 3, 2026-08-23 | Documentation only — §4.1.1 canonical serialization made self-contained (numbers, key order, escaping) |
 
 The v1.2 files sit at this directory's root rather than in a `v1.2/` subdirectory for
 one specific reason: the anchored v1.2 text is referenced by path from the current
@@ -54,6 +56,33 @@ Source revision: tag `cell-format-v1.3-defensive-pub`.
 | 961803 | `cba3701df17c2c9db621d859289c37879b83856e55c7529cd1c207edd14041f6` | 2026-08-10 00:35:00 |
 | 961805 | `7edb17cfcb5971918699e5f8d2dcd4d243fa5d1edbc2dbdc14f0639db2f3cb17` | 2026-08-10 00:41:25 |
 | 961836 | `f7128ba0009ca2e1c744b5bcc463a5980dad035e27b644a91c66b8eaf07e34bf` | 2026-08-10 04:42:43 |
+
+## v1.3 + corrections 2 — anchored 2026-08-23
+
+| File | SHA-256 | Bitcoin |
+|---|---|---|
+| `SPEC.md` | `19a16a2e 4827ae03 75499e25 d68275c5 3910a098 c47cebaf 144e219c 569917f5` | 963744, 963750, 963751, 963764 |
+
+`cell-crypto.js` is unchanged from the v1.3 anchor and was not re-stamped.
+
+| Block | Merkle root | Mined (UTC) |
+|---|---|---|
+| 963744 | `600d120fe8c75b486e950b7aa3711d18bc4e35a399b603f41987ab11dd37e695` | 2026-08-23 15:43:56 |
+| 963750 | `48d6ccdff76231ae33ee9272726ae3f2b2b6fe5bd993aa7957ac30009908c644` | 2026-08-23 17:16:04 |
+| 963751 | `8156c9d5e64fc9cfa17b9c4778688479a31599b55c87cd9d823a5ab23e90e453` | 2026-08-23 17:11:58 |
+| 963764 | `daf695f183cc09dbf778fa16a0c525b3d93f68e7491deee0a85f4f908d20bb9b` | 2026-08-23 20:32:26 |
+
+## v1.3 + corrections 2 and 3 — anchored 2026-08-23
+
+| File | SHA-256 | Bitcoin |
+|---|---|---|
+| `SPEC.md` | `0412968e ed2d6e16 831a8fa4 130eaf1a 9fedaad3 8fa3fceb 56aa12dd 0aad9e0b` | 963756, 963764, 963794 |
+
+| Block | Merkle root | Mined (UTC) |
+|---|---|---|
+| 963756 | `264fb5ee12aef7eccf1d789a64e19d4f43877a94327c66e811e9aa26031ea95c` | 2026-08-23 18:03:58 |
+| 963764 | `daf695f183cc09dbf778fa16a0c525b3d93f68e7491deee0a85f4f908d20bb9b` | 2026-08-23 20:32:26 |
+| 963794 | `d89b49d0e6e24238ecfdf19bf9d0d9ff252980b11cc23f30a434a5d3c61927f5` | 2026-08-24 01:46:42 |
 
 ## Verify it yourself
 
