@@ -4,6 +4,8 @@
 
 Published as a defensive disclosure. No patent is sought or asserted.
 
+**Author:** David Brown · **Intended venue:** Technical Disclosure Commons (TDCommons.org) · **License intent:** CC BY 4.0 (TDCommons default) — maximum reuse is the objective
+
 ---
 
 ## 1. Abstract
@@ -1010,7 +1012,7 @@ Any assessment of this disclosure as prior art should treat the two requirements
 
 The `.cell` format specification, its cryptographic constructions, and every technical mechanism described in this disclosure are published as a defensive disclosure. No patent is sought or asserted over them; they are contributed to the public prior art and are freely implementable by anyone, for any purpose, without license or royalty. This dedication is intended to be permanent and irrevocable: no party, including Enthropic Data LLC and the inventor named below, may later remove these techniques from the public's hands by seeking exclusive rights over them.
 
-The reference *code* implementing this specification is a separate matter from the format disclosed here, and is licensed separately (GNU Affero General Public License v3, with a commercial-license alternative available from Enthropic Data LLC); an implementation written independently from this specification is bound by none of that license and owes its authors nothing. Where this disclosure and the normative specification it reproduces (§5) disagree with any other description of the format, the pinned specification text in §5, verified against §9, governs.
+The reference *code* implementing this specification is a separate matter from the format disclosed here, and is licensed separately (the JavaScript reference implementation under the GNU Affero General Public License v3, with a commercial-license alternative available from Enthropic Data LLC; the Python, Go, Rust and Java ports and the conformance suite under the Apache License 2.0); an implementation written independently from this specification is bound by none of that license and owes its authors nothing. Where this disclosure and the normative specification it reproduces (§5) disagree with any other description of the format, the pinned specification text in §5, verified against §9, governs.
 
 ---
 
@@ -1020,18 +1022,6 @@ The reference *code* implementing this specification is a separate matter from t
 **Assignee / Defensive Publisher:** Enthropic Data LLC
 **Address:** Weddington, North Carolina, USA
 **Contact:** dbrown@enthropicdata.com
-
----
-
-## Submission Checklist (remove before filing)
-
-- [ ] Confirm target venue (Research Disclosure journal is the drafting target implied by this document's length and register; TDCommons/IP.com/arXiv are lower-cost alternatives per `docs/DEFENSIVE-PUBLISHING-GUIDE.md` §4 and may warrant a parallel, differently-formatted submission).
-- [x] Confirm the reference repository is public before submission — **done 2026-08-15**: published at `github.com/Enthropic-Data-LLC/cd-vanilla-public`, reachable anonymously, and both anchored files re-hashed from the published copies to the digests in §10.
-- [ ] Re-verify no secrets appear anywhere in this document (keys, credentials, customer data) — re-check after any edit.
-- [x] Run `ots upgrade` on the v1.3 proofs and confirm they carry a `BitcoinBlockHeaderAttestation` — **done 2026-08-10**; §10 records the confirmed heights 961803 / 961805 / 961836. Re-check before submitting that §10 does not say "pending" if it no longer is, and does not say confirmed while it is not.
-- [ ] Confirm the §9 figures still match their source cells if `docs/figure-data/` is regenerated (`node tools/make-figure-cells.mjs` prints every quoted value; `python3 tools/verify-cell.py docs/figure-data/*.cell` must report 3/3). All three source cells are committed, so every figure value is recheckable. They are vector schematics drawn in `docs/disclosure-header.typ`, so there is no raster resolution to check.
-- [ ] Build the PDF with `./docs/build-disclosure.sh` (US Letter, 12pt, 1" margins) and confirm the page count and that it reports no sparse pages.
-- [ ] After acceptance: record the publication number/DOI in `docs/defensive-pub/REGISTER.md` and save the confirmation into `docs/defensive-pub/evidence/`.
 
 ---
 
