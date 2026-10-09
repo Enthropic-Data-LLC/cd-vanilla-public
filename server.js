@@ -23,9 +23,27 @@ const MIME = {
   '.ico':  'image/x-icon',
 };
 
+// Resolve a request to a file inside this directory, or null. The decoded path
+// is resolved and then checked against the root: path.join alone follows "..",
+// which would serve any file the process can read. Dotfiles are refused too.
+function resolveRequest(rawUrl) {
+  let urlPath;
+  try { urlPath = decodeURIComponent(new URL(rawUrl, 'http://x').pathname); }
+  catch { return null; }
+  if (urlPath === '/') urlPath = '/index.html';
+  const filePath = path.resolve(__dirname, '.' + urlPath);
+  if (!filePath.startsWith(__dirname + path.sep)) return null;
+  if (path.relative(__dirname, filePath).split(path.sep).some(s => s.startsWith('.'))) return null;
+  return filePath;
+}
+
 function handler(req, res) {
-  let urlPath = req.url === '/' ? '/index.html' : req.url;
-  const filePath = path.join(__dirname, urlPath);
+  const filePath = resolveRequest(req.url);
+  if (!filePath) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not found');
+    return;
+  }
 
   fs.readFile(filePath, (err, data) => {
     if (err) {
@@ -52,7 +70,8 @@ try {
   });
   // Redirect HTTP → HTTPS
   http.createServer((req, res) => {
-    res.writeHead(301, { Location: `https://localhost:${PORT}${req.url}` });
+    const host = (req.headers.host || 'localhost').replace(/:\d+$/, '');
+    res.writeHead(301, { Location: `https://${host}:${PORT}${req.url}` });
     res.end();
   }).listen(HPORT, () => {
     console.log(`HTTP redirect  → http://localhost:${HPORT} (→ HTTPS)`);
