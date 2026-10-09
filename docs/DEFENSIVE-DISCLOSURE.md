@@ -1,6 +1,6 @@
 # The `.cell` Format: A Browser-Native Zero-Knowledge Document Protocol — Specification and Design Rationale
 
-**Enthropic Data LLC · Weddington, North Carolina, USA · 2026-08-09**
+**Enthropic Data LLC · Weddington, North Carolina, USA · 2026-10-09** (revision of 2026-08-09)
 
 Published as a defensive disclosure. No patent is sought or asserted.
 
@@ -53,6 +53,8 @@ This disclosure describes a document file format, `.cell`, and its reference cry
 > - The anchored text does not state the **ECDSA signature encoding**. It is the raw 64-byte `r ‖ s` (IEEE P1363), not DER. Corrected in §4.1. This omission is the one gap that defeated an independent spec-only verification of a real cell.
 >
 > Neither correction alters the format, and no cell ever written is affected: the implementation was always right and the document was wrong. They are recorded rather than quietly fixed because a disclosure that silently improved on its own anchored text would be asking the reader to trust exactly what it tells them not to.
+>
+> **Two further documentation revisions, also carried below** (`1.3 (corrections 2)` and `1.3 (corrections 3)` in §17, both 2026-08-23, neither altering the format). Corrections 2 fixes three places where the document contradicted itself: §15's worked example wrote `"share_index": null` against §6.4; §10 omitted v1.3 from the canonical-serialization set; and §14 omitted `file://` from the secure contexts. Corrections 3 makes §4.1.1 self-contained. The canonical serialization had been defined by deferring to JavaScript's `JSON.stringify`, which silently imports four rules no other language's JSON encoder follows by default — number formatting, UTF-16 key order, the exact escape set, and (for v1.0/v1.1) key-order preservation on parse. Each of those rules, at some point, produced a non-matching `header_hash` while the format was being ported to Python, Go, Rust and Java. The text below is therefore `docs/SPEC.md` at digest `0412968e…0aad9e0b`, separately anchored (§10).
 >
 > One passage present in `docs/SPEC.md` is **omitted** below: a repository-internal note on licensing, whose links point to files inside the source repository. Its substance — that the specification is unrestricted and not covered by the licence applying to the repository's source code — is stated directly in §11 of this document, which governs for the purposes of this disclosure. No technical content is omitted.
 >
@@ -189,6 +191,31 @@ canonicalize(v):
 ```
 
 This mirrors `JSON.stringify`'s primitive encoding and string escaping; the only differences are recursively sorted keys and no insignificant whitespace. v1.0/v1.1 cells continue to be verified with their original `JSON.stringify` serialization for backward compatibility (§12).
+
+Deferring to `JSON.stringify` is exact but not self-contained, and the four rules it silently imports are where independent implementations diverge. They are stated here normatively, because each of them changes the hashed bytes and none of them is the default behaviour of a general-purpose JSON encoder outside JavaScript.
+
+**Numbers.** JSON has no integer type: every number is an IEEE-754 binary64. A serializer MUST convert a value to binary64 *before* formatting it, and MUST then format it exactly as ECMA-262 6.1.6.1.20 (`Number::toString`, radix 10) specifies — the shortest decimal string that round-trips to the same binary64, with no trailing `.0`, positional form when the decimal exponent `n` satisfies `-6 < n ≤ 21` and exponential form otherwise, an explicit `+` on a non-negative exponent, and `-0` written as `0`. `NaN` and the infinities cannot appear, JSON having no literals for them.
+
+| Value | Canonical form | A common wrong answer |
+|-------|----------------|-----------------------|
+| `1.0` | `1` | `1.0` |
+| `-0` | `0` | `-0` |
+| `1e20` | `100000000000000000000` | `1e+20`, `1.0E20` |
+| `1e21` | `1e+21` | `1000000000000000000000` |
+| `1e-6` | `0.000001` | `1e-06` |
+| `1e-7` | `1e-7` | `1e-07`, `0.0000001` |
+| `5e-324` | `5e-324` | `4.9e-324` |
+| `9007199254740993` | `9007199254740992` | `9007199254740993` |
+
+The last row is the rule's practical edge: a language with arbitrary-precision integers must round the literal through binary64 and emit the rounded value, because that is what a JavaScript reader will do with the same bytes. Emitting the exact integer produces a serialization no conforming reader can reproduce.
+
+**Key ordering.** Keys sort by **UTF-16 code unit**, which is what `Array.prototype.sort` gives JavaScript — not by Unicode code point, and not by UTF-8 byte. The three orders agree throughout the Basic Multilingual Plane and disagree above it: a character outside the BMP is a surrogate pair in UTF-16 (`U+D800`–`U+DFFF`) and therefore sorts **below** `U+E000`–`U+FFFF`, where code-point and UTF-8 orders both place it above.
+
+**String escaping.** Escape exactly six characters plus the remaining C0 controls: `"` as `\"`, `\` as `\\`, `U+0008` as `\b`, `U+0009` as `\t`, `U+000A` as `\n`, `U+000C` as `\f`, `U+000D` as `\r`, and every other code point below `U+0020` as `\u00xx` with lowercase hex. Everything from `U+0020` upward is emitted literally as UTF-8 — **including `/`, `<`, `>`, `&`, `U+2028` and `U+2029`**. Escaping any of those is a common default: Go's `encoding/json` escapes `<`, `>`, `&` for HTML safety and `U+2028`/`U+2029` even with HTML escaping disabled, and several encoders escape `/`. Every such escape changes the bytes and therefore the hash.
+
+**Key order must survive parsing — v1.0/v1.1 only.** Because those versions serialize the header in its original insertion order (§12), an implementation whose JSON parser stores objects in an unordered or re-sorted map cannot reconstruct the bytes such a cell was signed over, and cannot verify it at all. Verifying v1.0/v1.1 therefore requires an order-preserving parse. v1.2+ sorts the keys itself and has no such requirement.
+
+> **Conformance vectors.** `conformance/vectors/canonical.json` carries input/expected pairs for all of the above, generated from the reference implementation. They need no cryptography and fail loudly, which makes them the cheapest first test for a new implementation: a canonicalization that disagrees produces a `header_hash` that never matches, with nothing in the failure to indicate why.
 
 #### 4.2 Header
 
@@ -544,7 +571,7 @@ Policy is enforced by the application layer only; it is not a cryptographic acce
 
 ### 10. Audit Chain
 
-The cell format provides a tamper-evident audit chain. Serialization below is the canonical form (§4.1.1) for v1.2, or `JSON.stringify` for v1.0/v1.1:
+The cell format provides a tamper-evident audit chain. Serialization below is the canonical form (§4.1.1) for v1.2 and v1.3, or `JSON.stringify` for v1.0/v1.1:
 
 ```
 file bytes
@@ -672,7 +699,7 @@ Contains the full key record including private key. Must be stored securely.
 | Document ID | ULID | 48-bit ms timestamp + 80-bit CSPRNG, Crockford base32 |
 | Randomness | `crypto.getRandomValues()` | Browser CSPRNG — never `Math.random()` |
 
-All operations use the **Web Crypto API** (`crypto.subtle`). Requires a secure context (HTTPS or localhost).
+All operations use the **Web Crypto API** (`crypto.subtle`). Requires a secure context — `https://`, `localhost`, or a `file://` document.
 
 ---
 
@@ -712,7 +739,6 @@ A minimal v1.3 cell encrypted for a single ECDH recipient, no quorum, permanent 
         "method": "ecdh-p256",
         "label": "Alice",
         "fingerprint": "a1b2c3d4e5f6a7b8",
-        "share_index": null,
         "wrapped_cek": {
           "eph_spki":  "<base64 — ephemeral public key>",
           "hkdf_salt": "<base64 — 32 random bytes>",
@@ -770,6 +796,8 @@ A minimal v1.3 cell encrypted for a single ECDH recipient, no quorum, permanent 
 | 1.2 (editorial) | 2026-07-19 | Define `minimum_atl` (Access Trust Level, §8) and declare it canonical over the legacy `minimum_etl` field name. No format or wire change. |
 | 1.3 | 2026-08-09 | Split `lifetime` by enforcer into `advisory` (conformance behaviour, not enforced against a keyholder) and `disposal` (operator-side, enforced against anyone without a copy), and rename `expires_at` to `advisory.retain_until` (§8). Motivated by a demonstration that an independent opener written from this specification recovers plaintext from a cell whose expiry has passed: the old flat shape graded an enforced field and an unenforced one identically, and the name "expires" claimed a guarantee the format does not provide. Serialization, AAD construction and all cryptographic primitives are unchanged; `1.0`/`1.1`/`1.2` cells are read under their own rules. See `docs/design/temporal-enforcement.md`. |
 | 1.3 (corrections) | 2026-08-09 | Documentation corrections from an accuracy review that verified every claim against the reference implementation. **No format or wire change; no cell ever written is affected.** (a) Binary fields are **standard base64**, not base64url as stated since v1.0 — the document was wrong, the implementation was always right, and following the old text produced unparseable cells (§4.0). (b) `header_sig` is raw 64-byte `r ‖ s` (IEEE P1363), not DER — previously unstated, and the one gap that defeated an independent spec-only verification (§4.1). (c) `header_hash` is mandatory and its absence is a rejection; previously an opener could treat a missing hash as licence to skip the header, ciphertext and signature checks together (§4.1, §10). (d) Verification order is now normative: integrity precedes all key use (§10). (e) Signature *removal* is documented as undetectable (§4.1, §10). (f) §16 said "N-1 shares reveal nothing" where it meant fewer than M — N-1 is a quorum's worth. (g) `share_index` is omitted, not `null`, on non-quorum cells (§6.4). See `docs/REVIEW-2026-08-09.md`. |
+| 1.3 (corrections 2) | 2026-08-23 | Three documentation corrections, found by a line-by-line review of the specification against itself and against the exposition built on it. **No format or wire change; no cell ever written is affected.** (a) §15's complete example wrote `"share_index": null` on a non-quorum cell, contradicting §6.4 and correction (g) above — the 2026-08-09 correction reached the normative text and missed the example, so the one artifact an implementer is most likely to copy still demonstrated the discouraged form. Example corrected to omit the key. (b) §10 gave the canonical serialization as applying to "v1.2", omitting v1.3, which §4.1.1 and §12 both place in `CANONICAL_VERSIONS`. (c) §14 gave the secure-context requirement as "HTTPS or localhost", omitting `file://` — a legitimate secure context and the one the offline, air-gapped sealing path depends on. |
+| 1.3 (corrections 3) | 2026-08-23 | §4.1.1 made self-contained. **No format or wire change; no cell ever written is affected, and the reference implementation is unmodified.** The canonical serialization was defined by deferring to JavaScript's `JSON.stringify`, which is exact but silently imports four rules that are not the default behaviour of a JSON encoder in any other language: binary64 number formatting per ECMA-262 `Number::toString`, UTF-16 code-unit key ordering, the precise escape set (notably that `/`, `<`, `>`, `&`, `U+2028` and `U+2029` are **not** escaped), and — for v1.0/v1.1 only — the requirement that a parser preserve object key order at all. Each is now stated normatively with a worked table, because each independently produced a `header_hash` that never matched during the Python, Go, Rust and Java ports, and the failure carries no indication of its cause. Machine-checkable vectors accompany them at `conformance/vectors/canonical.json`. |
 
 ---
 
@@ -898,6 +926,25 @@ what such an exercise is for. §4.1 now states the encoding, and the check
 passes. A disclosure claiming enablement should be tested by the standard it
 sets, and should say what the test found.
 
+The exercise has since been repeated at full scale. Four further
+implementations of the complete format — in Python, Go, Rust and Java, under
+`impl/` in the reference repository and licensed Apache-2.0 — now seal and open
+cells interoperably with the JavaScript reference. All five are checked against
+one shared corpus under `conformance/`: 27 captured cells — 14 that must open,
+spanning every version from the legacy layout through v1.3, ECDH, passphrase and
+quorum access, and signed cells; and 13 tamper, downgrade and policy cases that
+must be refused — plus 225 canonical-serialization vectors that need no
+cryptography at all. (Hardware-key access cannot be captured as a fixed vector
+and is not in the corpus.) A cell sealed by any one implementation opens in all the others. Building
+the ports found the same kind of failure the verifier found, at greater
+scale: §4.1.1 had defined the canonical serialization by deferring to
+`JSON.stringify`, and each of the four rules that deferral silently imports
+(number formatting, UTF-16 key order, the escape set, key-order preservation for
+v1.0/v1.1) produced a `header_hash` that never matched at some point during the
+ports. §4.1.1 now states all four normatively, which is the `1.3 (corrections 3)`
+row of §17. The reference implementation was never wrong, and no cell is
+affected; the text simply had not said what it did.
+
 ```{=typst}
 #fig-envelope()
 ```
@@ -936,15 +983,23 @@ The design described in this disclosure was cryptographically timestamped, in th
 
 **Bitcoin anchors for v1.3:** blocks **961803** (merkle root `cba3701d…41f6`, mined 2026-08-10 00:35:00 UTC), **961805** (`7edb17cf…cb17`, 00:41:25 UTC) and **961836** (`f7128ba0…34bf`, 04:42:43 UTC).
 
-The text reproduced in §5 of this document is that anchored v1.3 specification, and the two are byte-identical: hashing `docs/SPEC.md` at the v1.3 tag reproduces the digest above. Every mechanism disclosed here is therefore covered by one anchor or the other — the common core by 2026-07-18, the lifetime split by 2026-08-09 — with no part of the disclosure resting on publication date alone.
+Every mechanism disclosed here is covered by one of those two anchors — the common core by 2026-07-18, the lifetime split by 2026-08-09 — with no part of the disclosure resting on publication date alone.
 
-To verify a digest yourself: the anchored bytes and their upgraded proofs are collected in **`docs/defensive-pub/anchors/`** — v1.2 at its root, v1.3 in `anchors/v1.3/` — so no tag checkout is required. Hash the file with SHA-256, confirm it matches the value above, then run `ots info <file>.ots` and confirm it commits into the stated Bitcoin block, via your own node (`ots verify`) or any block explorer's merkle root. Nothing in that procedure depends on this repository's commit history: an OpenTimestamps proof commits to *file content*, so the digests can be checked against the files as published, and the signed tags recording the original revisions live in the private source repository from which this one was exported. This document, once submitted to a durable independent registry, becomes one further dated witness to the same design, corroborating rather than replacing the priority date already established by the anchors above.
+**The exact text reproduced in §5 carries a third anchor.** §5 is the v1.3 specification plus two later documentation revisions (see the note at the head of §5), which add no mechanism. That text was stamped as its own revision:
 
-**One honest note on the proofs themselves.** Between 2026-07-18 and 2026-08-09 the `.ots` files committed for `docs/SPEC.md` and `cell-crypto.js` were *pending-only stubs*: the Bitcoin attestations existed on the calendars but had never been folded into the committed proofs with `ots upgrade`. For those three weeks the repository asserted an anchor that a reader could not confirm from the committed files, even though the anchor was real. Every proof in `docs/defensive-pub/anchors/` is now upgraded and carries its attestations. The episode is recorded because the difference between *true* and *verifiable by a stranger* is the entire subject of this section, and a disclosure that quietly repaired such a gap would have failed its own standard.
+| Artifact | SHA-256 | Anchored |
+|---|---|---|
+| `docs/SPEC.md` (v1.3 + corrections 2 and 3) | `0412968e ed2d6e16 831a8fa4 130eaf1a 9fedaad3 8fa3fceb 56aa12dd 0aad9e0b` | 2026-08-23 · Bitcoin-confirmed 2026-08-23/24 |
+
+**Bitcoin anchors for the corrected text:** blocks **963756** (merkle root `264fb5ee…a95c`, mined 2026-08-23 18:03:58 UTC), **963764** (`daf695f1…bb9b`, 20:32:26 UTC) and **963794** (`d89b49d0…27f5`, 2026-08-24 01:46:42 UTC). Hashing `docs/defensive-pub/anchors/v1.3-corrections-3/SPEC.md` reproduces the digest above.
+
+To verify a digest yourself: the anchored bytes and their upgraded proofs are collected in **`docs/defensive-pub/anchors/`** — v1.2 at its root, v1.3 in `anchors/v1.3/`, the corrected text of §5 in `anchors/v1.3-corrections-3/` — so no tag checkout is required. Hash the file with SHA-256, confirm it matches the value above, then run `ots info <file>.ots` and confirm it commits into the stated Bitcoin block, via your own node (`ots verify`) or any block explorer's merkle root. Nothing in that procedure depends on this repository's commit history: an OpenTimestamps proof commits to *file content*, so the digests can be checked against the files as published, and the signed tags recording the original revisions live in the private source repository from which this one was exported. This document, once submitted to a durable independent registry, becomes one further dated witness to the same design, corroborating rather than replacing the priority date already established by the anchors above.
+
+**One honest note on the proofs themselves.** Between 2026-07-18 and 2026-08-09 the `.ots` files committed for `docs/SPEC.md` and `cell-crypto.js` were *pending-only stubs*: the Bitcoin attestations existed on the calendars but had never been folded into the committed proofs with `ots upgrade`. For those three weeks the repository asserted an anchor that a reader could not confirm from the committed files, even though the anchor was real. Every proof in `docs/defensive-pub/anchors/` is now upgraded and carries its attestations. The same gap recurred once more: the proof for the corrected text of §5 was stamped on 2026-08-23 and not upgraded until 2026-10-08, although its blocks were mined within hours. The episode is recorded because the difference between *true* and *verifiable by a stranger* is the entire subject of this section, and a disclosure that quietly repaired such a gap would have failed its own standard.
 
 **A distinction the reader is owed: provable existence is not the same as public availability.** The anchors above establish, beyond dispute, that the named bytes *existed* on the stated dates. They do not by themselves establish that those bytes were *publicly accessible* on those dates, and the two are separate requirements for prior art. The two therefore carry **different dates**, and this document asks to be read accordingly:
 
-- **Existence** dates from the anchors — 2026-07-18 for v1.2, 2026-08-09 for v1.3, each confirmed in the Bitcoin blocks listed above.
+- **Existence** dates from the anchors — 2026-07-18 for v1.2, 2026-08-09 for v1.3, and 2026-08-23 for the corrected text of §5, each confirmed in the Bitcoin blocks listed above.
 - **Public accessibility** dates from **2026-08-15**, when the reference repository was published at **`github.com/Enthropic-Data-LLC/cd-vanilla-public`**, reachable anonymously and without an account. From that date the verification procedure described in the preceding paragraph can be carried out by any third party, and the specification text is retrievable by an interested member of the public without assistance.
 
 Any assessment of this disclosure as prior art should treat the two requirements separately and should date accessibility from 2026-08-15 rather than from the anchors, notwithstanding that the anchored bytes and the published bytes are identical and can be shown to be so. That the earlier date cannot be claimed for accessibility is stated here rather than left to be discovered, because a disclosure that overstated its own reach would fail the standard it asks readers to hold it to.

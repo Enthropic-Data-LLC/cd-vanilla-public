@@ -1,8 +1,8 @@
 # Conformance fixtures
 
 Shared test material for `.cell` implementations. Language-neutral on purpose —
-the Python port consumes these today, and the Go and Rust ports should consume
-exactly the same files rather than minting their own.
+all five implementations (the JavaScript reference and the Python, Go, Rust
+and Java ports) consume exactly these files rather than minting their own.
 
 ## `keys/`
 
@@ -43,10 +43,10 @@ Python port — the field names are the spec's, not any one library's.
 ## `vectors/`
 
 27 captured cells — 14 that must open, 13 that must be refused — indexed by
-`vectors/manifest.json`, plus 225 canonical-serialization vectors. All three
+`vectors/manifest.json`, plus 225 canonical-serialization vectors. All five
 implementations agree on all of them: every open vector opens in the JavaScript
-reference, the Python port and the Go port with byte-identical plaintext, and
-every reject vector is refused by all three.
+reference and in the Python, Go, Rust and Java ports with byte-identical
+plaintext, and every reject vector is refused by all five.
 
 ```
 vectors/
