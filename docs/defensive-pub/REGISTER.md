@@ -16,7 +16,7 @@ Only `published` establishes prior art. Everything else protects nothing.
 
 | ID | Mechanism | Priority | Notes |
 |----|-----------|----------|-------|
-| DP-009 | Full-format master disclosure — all `.cell` **v1.3** mechanisms consolidated | ★ | `docs/DEFENSIVE-DISCLOSURE.md` — reproduces `docs/SPEC.md` in §5 plus design rationale (§6), variations (§7), scope limitations (§8), figures (§9); drafted for Research Disclosure journal submission, 43pp letter/12pt. Rebuilt on v1.3 2026-08-09. Not yet submitted or timestamped in its own right — see anchors below for the priority date it corroborates. |
+| DP-009 | Full-format master disclosure — all `.cell` **v1.3** mechanisms consolidated | ★ | `docs/DEFENSIVE-DISCLOSURE.md` — reproduces `docs/SPEC.md` in §5 plus design rationale (§6), variations (§7), scope limitations (§8), figures (§9); drafted for Research Disclosure journal submission. **Venue decided 2026-10-09: TDCommons.** Refreshed 2026-10-09 to spec `0412968e` (corrections 3) plus the four ports, 47pp letter/12pt; pre-filing checklist in `DP-009-prefiling-checklist.md`. Not yet submitted — see anchors below for the priority date it corroborates. |
 | DP-002 | Canonical-serialization audit chain, version-gated | ★ | Partly covered inside DP-001; may warrant its own disclosure for the hash/sig application. |
 | DP-003 | Shamir-split CEK across a multi-method access map (`share_index`) | ★ | Split the *content key*, wrap each share to a different access method. |
 | DP-004 | WebAuthn-PRF-derived keypair — token *is* the key, never stored | ★ | P-256 scalar = PRF output mod n; portable public stub. Physical touch-test still pending. |
@@ -213,5 +213,5 @@ staying online — identifiers and caveats in [`evidence/README.md`](evidence/RE
 > anchors (2026-07-18 v1.2 / 2026-08-09 v1.3); public availability from the repository
 > (2026-08-15); indexed venue publication from TDCommons (2026-08-17). DP-001 covers the
 > metadata-as-AAD binding only. **The remaining backlog rows below are still unpublished
-> and protect nothing** — DP-009, the full-format master disclosure, is the significant one
-> and its venue is still undecided.
+> and protect nothing** — DP-009, the full-format master disclosure, is the significant one;
+> its venue is TDCommons (decided 2026-10-09).
