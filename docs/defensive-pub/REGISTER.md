@@ -57,7 +57,7 @@ Frozen copies with their upgraded proofs are in `docs/defensive-pub/anchors/v1.3
 and must never be edited. `cell-crypto.js` remains **byte-identical to its
 anchor** — `sha256sum cell-crypto.js` reproduces the digest above.
 
-### `docs/SPEC.md` — documentation revision, stamped 2026-08-23 (pending)
+### `docs/SPEC.md` — documentation revision, stamped 2026-08-23, Bitcoin-confirmed (upgraded 2026-10-08)
 
 `docs/SPEC.md` is **no longer byte-identical to the v1.3 anchor**, and that is
 intentional. Two documentation revisions were applied on 2026-08-23 —
@@ -66,7 +66,7 @@ was re-stamped:
 
 | Artifact | SHA-256 | Anchored |
 |---|---|---|
-| `docs/SPEC.md` (v1.3 + corrections 2 and 3) | `0412968eed2d6e16831a8fa4130eaf1a9fedaad38fa3fceb56aa12dd0aad9e0b` | 2026-08-23, OTS — **pending Bitcoin confirmation**, run `ots upgrade docs/SPEC.md.ots` |
+| `docs/SPEC.md` (v1.3 + corrections 2 and 3) | `0412968eed2d6e16831a8fa4130eaf1a9fedaad38fa3fceb56aa12dd0aad9e0b` | 2026-08-23, OTS — **Bitcoin-confirmed** (963756, 963764, 963794) |
 
 **Neither revision changes the format.** No wire change, no cell ever written is
 affected, and `cell-crypto.js` is unmodified — which is why its anchor still
@@ -81,14 +81,23 @@ prior art is established by what the disclosure describes, and describing it mor
 precisely does not restart that clock. The new stamp exists so the corrected text
 has its own verifiable date, not to claim a new one for the format.
 
-**Still owed:** `ots upgrade docs/SPEC.md.ots` once Bitcoin confirms (hours, not
-days), then freeze the pair into `docs/defensive-pub/anchors/` alongside the
-others and record the block heights here. Until that upgrade lands this row is a
-calendar attestation only.
+**Upgraded 2026-10-08**, 46 days after stamping, although the blocks were mined
+within hours. Frozen with its proof in `docs/defensive-pub/anchors/v1.3-corrections-3/`.
+Each proof's computed merkle root was checked against blockstream.info.
 
-> ⚠️ The private working repository `sohocs509/cd-vanilla` carried corrections 2
-> **unstamped** from 2026-08-23. Its `docs/SPEC.md` should be brought to
-> `0412968e…` so the two trees agree and only one digest is in circulation.
+| Block | Merkle root | Mined (UTC) |
+|---|---|---|
+| 963756 | `264fb5ee12aef7eccf1d789a64e19d4f43877a94327c66e811e9aa26031ea95c` | 2026-08-23 18:03:58 |
+| 963764 | `daf695f183cc09dbf778fa16a0c525b3d93f68e7491deee0a85f4f908d20bb9b` | 2026-08-23 20:32:26 |
+| 963794 | `d89b49d0e6e24238ecfdf19bf9d0d9ff252980b11cc23f30a434a5d3c61927f5` | 2026-08-24 01:46:42 |
+
+**Corrections 2 alone is anchored too.** The private working repository stamped
+`docs/SPEC.md` at `1.3 (corrections 2)` — digest `19a16a2e…`, Bitcoin-confirmed
+963744/963750/963751/963764 — and that is the text the companion book reproduces.
+Its bytes and proof are frozen here in `anchors/v1.3-corrections-2/` so a reader of
+the book can verify that text from this public repository. Two confirmed digests
+of the same revision line are therefore in circulation. That is harmless, because
+anchors are additive, but the private tree has still not taken corrections 3.
 
 Superseded v1.3 stamps, left pending and overtaken the same day — do not cite:
 `9e119336…` (SPEC.md, pre-corrections) and `69c2a89d…` (cell-crypto.js,
