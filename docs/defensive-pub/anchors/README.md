@@ -14,6 +14,7 @@ Several revisions are anchored, and they cover different things:
 | [`v1.3/`](v1.3/) | v1.3, 2026-08-09 | The above **plus** the lifetime split by enforcer (`advisory`/`disposal`, `expires_at` → `retain_until`) and the accuracy-review corrections |
 | [`v1.3-corrections-2/`](v1.3-corrections-2/) | v1.3 + corrections 2, 2026-08-23 | Documentation only — no format or wire change. The specification text reproduced in the companion book's Appendix A |
 | [`v1.3-corrections-3/`](v1.3-corrections-3/) | v1.3 + corrections 2 and 3, 2026-08-23 | Documentation only — §4.1.1 canonical serialization made self-contained (numbers, key order, escaping) |
+| [`v1.4/`](v1.4/) | v1.4, 2026-10-20 | Blind recipients, inner sender signature, Padmé padding, Argon2id, authenticated format version. **Stamp PENDING** — no Bitcoin attestation until `ots upgrade` and `ots info` show one |
 
 The v1.2 files sit at this directory's root rather than in a `v1.2/` subdirectory for
 one specific reason: the anchored v1.2 text is referenced by path from the current
@@ -142,3 +143,12 @@ in the frozen v1.2 text are fixed in v1.3:
 Neither affects the priority claim, which is about what existed on 2026-07-18, not about
 whether it was free of errors. The full list of corrections is the `1.3 (corrections)`
 row of the v1.3 changelog, and the reasoning is in `../../REVIEW-2026-08-09.md`.
+
+## v1.4 — stamped 2026-10-20 (PENDING)
+
+| File | SHA-256 | Bitcoin |
+|---|---|---|
+| `v1.4/SPEC.md` | `35d2883e 6c6e277b bb383139 cc7c48c7 c98bdaa2 8865158f 97e43079 300974f8` | pending |
+| `v1.4/cell-crypto.js` | `19f9fd04 f2d5db13 a6e5d855 433c9e13 8e4051dc ad2bb04f 04b63c85 da5d17c6` | pending |
+
+Source revision: tag `cell-format-v1.4-defensive-pub`.

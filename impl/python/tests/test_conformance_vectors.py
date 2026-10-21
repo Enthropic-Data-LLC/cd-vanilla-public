@@ -50,6 +50,10 @@ REASON_TO_ERROR: dict[str, type[Exception]] = {
     "no-matching-key": NoMatchingKeyError,
     "retention-expired": LifetimeError,
     "timed-release-locked": LifetimeError,
+    # v1.4
+    "signature-misplaced": MalformedCellError,
+    "padding-invalid": MalformedCellError,
+    "access-map-too-large": MalformedCellError,
 }
 
 
@@ -84,10 +88,10 @@ class TestConformanceVectors(unittest.TestCase):
                     self.assertIn(vector["reject_reason"], self.manifest["reject_reasons"])
 
     def test_every_supported_version_has_a_vector(self):
-        # §12 requires 1.0-1.3 plus legacy v2.x to stay readable. A version with
+        # §12 requires 1.0-1.4 plus legacy v2.x to stay readable. A version with
         # no vector is a version nobody actually tests.
         covered = {v["cell_version"] for v in self.manifest["vectors"]}
-        for version in ("1.0", "1.1", "1.2", "1.3", "2.0"):
+        for version in ("1.0", "1.1", "1.2", "1.3", "1.4", "2.0"):
             self.assertIn(version, covered, f"no vector covers version {version}")
 
     def test_every_access_method_has_a_vector(self):
@@ -98,6 +102,7 @@ class TestConformanceVectors(unittest.TestCase):
             methods.update(e.get("method") for e in entries)
         self.assertIn("ecdh-p256", methods)
         self.assertIn("pbkdf2", methods)
+        self.assertIn("argon2id", methods)
         # yubikey-prf is intentionally absent: its key material comes from a
         # WebAuthn PRF evaluation that no file can carry and no headless runner
         # can perform. A vector for it would have to ship the PRF output, which

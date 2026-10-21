@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import hashlib
 import io
+import math
+import unicodedata
 import zlib
 
 from cryptography.exceptions import InvalidSignature, InvalidTag
@@ -212,6 +214,98 @@ def _pbkdf2(passphrase: str, salt: bytes, iterations: int) -> bytes:
     return PBKDF2HMAC(
         algorithm=hashes.SHA256(), length=32, salt=salt, iterations=iterations
     ).derive(passphrase.encode("utf-8"))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CEK wrapping — Argon2id, spec §6.5 (v1.4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Written by default: RFC 9106 §4's second recommended option.
+ARGON2_DEFAULTS = {"m": 65536, "t": 3, "p": 4}
+#: Openers refuse parameters outside these bounds (§6.5): below OWASP's floor
+#: the passphrase is barely protected; above the ceiling the opener can be
+#: made to exhaust memory or time by a hostile cell.
+ARGON2_LIMITS = {"m_min": 19456, "m_max": 1048576, "t_min": 1, "t_max": 16, "p_min": 1, "p_max": 16}
+ARGON2_ONE_PASS_MIN_M = 47104
+
+
+def argon2_params(w: dict) -> tuple[int, int, int]:
+    """Validate ``m``/``t``/``p`` from an entry exactly as the reference does."""
+    m, t, p = w.get("m"), w.get("t"), w.get("p")
+    lim = ARGON2_LIMITS
+    if not all(isinstance(x, int) and not isinstance(x, bool) for x in (m, t, p)) or not (
+        lim["m_min"] <= m <= lim["m_max"] and lim["t_min"] <= t <= lim["t_max"] and lim["p_min"] <= p <= lim["p_max"]
+    ):
+        raise MalformedCellError("Argon2id parameters out of range — refusing (§6.5)")
+    if t == 1 and m < ARGON2_ONE_PASS_MIN_M:
+        raise MalformedCellError("Argon2id with one pass needs at least 46 MiB — refusing (§6.5)")
+    return m, t, p
+
+
+def _argon2(passphrase: str, salt: bytes, m: int, t: int, p: int) -> bytes:
+    """Argon2id v0x13, 32-byte tag, over the UTF-8 of the passphrase's NFC form.
+
+    Unlike PBKDF2 entries (§6.2), v1.4 normalizes: a passphrase typed with a
+    composed é on one machine and a decomposed é on another is one passphrase.
+    """
+    try:
+        from argon2.low_level import Type, hash_secret_raw
+    except ImportError as exc:  # pragma: no cover - dependency is declared
+        raise CellError("argon2id entries need the argon2-cffi package") from exc
+    secret = unicodedata.normalize("NFC", passphrase).encode("utf-8")
+    return hash_secret_raw(secret, salt, time_cost=t, memory_cost=m, parallelism=p, hash_len=32, type=Type.ID)
+
+
+def argon2id_wrap_cek(cek_or_share: bytes, passphrase: str, params: dict | None = None, *, salt: bytes | None = None) -> dict:
+    m, t, p = argon2_params(params or ARGON2_DEFAULTS)
+    if salt is None:
+        salt = __import__("secrets").token_bytes(16)
+    kek = _argon2(passphrase, salt, m, t, p)
+    return {"salt": b64encode(salt), "m": m, "t": t, "p": p,
+            "ct": b64encode(keywrap.aes_key_wrap(kek, cek_or_share))}
+
+
+def argon2id_unwrap_cek(wrapped: dict, passphrase: str) -> bytes:
+    m, t, p = argon2_params(wrapped)
+    salt = b64decode(wrapped["salt"], field="salt")
+    if len(salt) < 16:
+        raise MalformedCellError("Argon2id salt shorter than 16 bytes — refusing (§6.5)")
+    kek = _argon2(passphrase, salt, m, t, p)
+    return keywrap.aes_key_unwrap(kek, b64decode(wrapped["ct"], field="ct"))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Padding — Padmé, spec §5.4 (v1.4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+PAD_FLOOR = 512
+
+
+def padme_length(n: int) -> int:
+    """Padmé (Nikitin et al., PETS 2019) with a 512-byte floor."""
+    if n <= PAD_FLOOR:
+        return PAD_FLOOR
+    e = n.bit_length() - 1                 # floor(log2 n), exact for ints
+    s = e.bit_length()                      # floor(log2 e) + 1
+    step = 1 << (e - s)
+    return -(-n // step) * step
+
+
+def pad_body(gz: bytes) -> bytes:
+    """``LE32(len(gz)) || gz || zeros`` up to ``padme_length(4 + len(gz))``."""
+    total = padme_length(4 + len(gz))
+    return __import__("struct").pack("<I", len(gz)) + gz + bytes(total - 4 - len(gz))
+
+
+def unpad_body(body: bytes) -> bytes:
+    if len(body) < 4:
+        raise MalformedCellError("malformed padded body")
+    (n,) = __import__("struct").unpack("<I", body[:4])
+    if 4 + n > len(body):
+        raise MalformedCellError("malformed padded body — length exceeds body")
+    if any(body[4 + n :]):
+        raise MalformedCellError("malformed padded body — non-zero padding")
+    return body[4 : 4 + n]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

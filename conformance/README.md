@@ -78,14 +78,18 @@ python3). The corpus is fixed-seed, so it reproduces exactly.
 
 ### Coverage
 
-**Versions** — 1.3, plus the read paths §12 requires to keep working: 1.2
+**Versions** — 1.4 (`v14-*`, `reject-v14-*`: blind entries, inner signature,
+padding, Argon2id, version in the AAD) and 1.3, plus the read paths §12 requires
+to keep working: 1.2
 (canonical serialization, flat lifetime), 1.1 (AAD over `JSON.stringify`), 1.0
 (no AAD at all) and pre-spec legacy 2.0 (raw ECDH as the AES-KW key, no HKDF, no
 header, no manifest prefix). Nothing writes those any more, which is exactly why
 they need vectors — an untested read path is a read path that rots.
 
-**Access methods** — `ecdh-p256` and `pbkdf2`, singly, mixed, and as Shamir
-shares. `yubikey-prf` is deliberately absent: its key material comes from a
+**Access methods** — `ecdh-p256`, `pbkdf2` and (v1.4) `argon2id`, singly,
+mixed, and as Shamir shares. The v1.4 vectors are added with
+`make-vectors.py --add-v14`, which leaves every earlier vector byte-for-byte as
+committed. `yubikey-prf` is deliberately absent: its key material comes from a
 WebAuthn PRF evaluation that no file can carry and no headless runner can
 perform, so a vector would have to ship the PRF output and would then be testing
 AES-KW rather than the access method.

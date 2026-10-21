@@ -29,6 +29,7 @@ const appExports =
   'return { toB64, fromB64, sha256, toHex, ulid, gfMul, gfInv, shamirSplit, ' +
   'shamirCombine, cellCreate, cellOpen, ecdhWrapCek, ecdhUnwrapCek, ' +
   'pbkdf2WrapCek, pbkdf2UnwrapCek, gzip, gunzip, canonicalize, serializeHeader, ' +
+  'blake2b, argon2id, argon2Params, argon2idWrapCek, argon2idUnwrapCek, padmeLength, padBody, unpadBody, ' +
   'crypto: globalThis.crypto };';
 const w = new Function(indexJs + '\n;' + appExports)();
 

@@ -177,10 +177,10 @@ function showModal(html) {
 function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
 
 function methodIcon(m) {
-  return { 'ecdh-p256': '🔑', 'pbkdf2': '💬', 'yubikey-prf': '🔐' }[m] || '🗝️';
+  return { 'ecdh-p256': '🔑', 'pbkdf2': '💬', 'argon2id': '💬', 'yubikey-prf': '🔐' }[m] || '🗝️';
 }
 function methodLabel(m) {
-  return { 'ecdh-p256': 'ECDH P-256', 'pbkdf2': 'Passphrase (PBKDF2)', 'yubikey-prf': 'YubiKey PRF' }[m] || m;
+  return { 'ecdh-p256': 'ECDH P-256', 'pbkdf2': 'Passphrase (PBKDF2)', 'argon2id': 'Passphrase (Argon2id)', 'yubikey-prf': 'YubiKey PRF' }[m] || m;
 }
 function fileIcon(type) {
   if (!type) return '📄';
@@ -568,7 +568,8 @@ function encConfirmPass() {
   const err = document.getElementById('mp-err');
   if (!p1) { err.textContent='Passphrase required'; err.style.display='block'; return; }
   if (p1 !== p2) { err.textContent='Passphrases do not match'; err.style.display='block'; return; }
-  _encRecipients.push({ method: 'pbkdf2', label: lbl, passphrase: p1 });
+  // v1.4 writes Argon2id (§6.5); the label stays in this UI only — v1.4 entries are blind
+  _encRecipients.push({ method: 'argon2id', label: lbl, passphrase: p1 });
   closeModal(); renderRecList();
 }
 
@@ -665,7 +666,7 @@ async function doEncrypt() {
     const n = cell.header.access_map.length;
     const t = cell.header.threshold.required;
     const threshNote = t > 1 ? ` (${t}-of-${n} quorum)` : '';
-    const sigNote    = cell.header_sig ? ` · signed` : '';
+    const sigNote    = (cell.header_sig || senderRec) ? ` · signed` : '';
     showAlert('enc-status',
       `✅ Saved as ${_encFile.name}.${fmt} — ${n} recipient(s)${threshNote}${sigNote}, AES-256-GCM`, 'success');
   } catch (e) {
@@ -708,7 +709,7 @@ async function renderOpen(app) {
             ${policy?.watermark_mode && policy.watermark_mode !== 'none' ? `<tr><td>Watermark</td><td>${esc(policy.watermark_mode)}</td></tr>` : ''}
             ${policy?.created_on_origin ? `<tr><td>Origin</td><td style="font-size:0.8rem">${esc(policy.created_on_origin)}</td></tr>` : ''}
             <tr><td>Integrity</td><td>${c.header_hash ? '✅ hash chain' : '⚠️ no hash (legacy)'}</td></tr>
-            <tr><td>Signed by</td><td>${c.header_sig ? `<span style="font-family:monospace;font-size:0.78rem">${esc(c.header_sig_by || '?')}</span>` : '—'}</td></tr>
+            <tr><td>Signed by</td><td>${c.header_sig ? `<span style="font-family:monospace;font-size:0.78rem">${esc(c.header_sig_by || '?')}</span>` : (c.version === '1.4' ? '<span style="color:#aaa;font-style:italic">🔒 inside the ciphertext, if signed</span>' : '—')}</td></tr>
             ${c.header?.prev_hash ? `<tr><td>Prev cell</td><td style="font-family:monospace;font-size:0.72rem" title="${esc(c.header.prev_hash)}">🔗 ${esc(c.header.prev_hash.slice(0,24))}…</td></tr>` : ''}
             <tr><td>Doc ID</td><td style="font-family:monospace;font-size:0.72rem">${docId.slice(0,18)}…</td></tr>
             <tr><td>Version</td><td>${esc(c.version || c.cd_version || '—')}</td></tr>
@@ -808,6 +809,7 @@ async function openConfirmPass() {
   if (!pass) { err.textContent='Enter a passphrase'; err.style.display='block'; return; }
   try {
     const result = await cellOpen(_openCell, async (r) => {
+      if (r.method === 'argon2id') return argon2idUnwrapCek(r.wrapped_cek, pass);
       if (r.method !== 'pbkdf2') return null;
       return pbkdf2UnwrapCek(r.wrapped_cek, pass);
     });
@@ -1217,7 +1219,7 @@ function renderAbout(app) {
     ]
   },
   "header_hash": "&lt;base64 SHA-256 of header JSON&gt;",
-  "header_sig": "&lt;base64 ECDSA-SHA256 over header JSON&gt; | null",
+  "header_sig": "&lt;base64 ECDSA-SHA256 over header JSON&gt; | null   (≤ v1.3; v1.4 signs inside the payload)",
   "payload": {
     "alg": "AES-256-GCM",
     "encoding": "base64+gzip",

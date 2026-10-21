@@ -1,4 +1,4 @@
-# Cellular Defense — Cell Format Specification v1.3
+# Cellular Defense — Cell Format Specification v1.4
 
 **Enthropic Data LLC · enthropicdata.com · Weddington, NC**  
 *Published as a defensive disclosure — freely implementable; no patent asserted.*
@@ -10,6 +10,15 @@
 > An independent implementation written from this document owes nothing to
 > Enthropic Data. See [`LICENSING.md`](../LICENSING.md).
 
+> **Since v1.4:** the readable header no longer names anyone. Access-map entries
+> carry **no fingerprint and no label**, and openers find their entry by trial
+> decryption (§6). The **sender signature moves inside the encrypted manifest**
+> (§4.5), so only recipients learn who signed — and it now covers the content, the
+> cell's identity and the intended recipients. The decrypted body is
+> **length-framed and Padmé-padded** (§5.4) so the ciphertext size reveals little
+> about the content. A new **Argon2id** passphrase method (§6.5) replaces PBKDF2
+> for new cells, and the **format version is authenticated** in the AAD (§4.4).
+>
 > **Since v1.3:** `lifetime` is **split by enforcer** (§8) — `advisory`, which
 > conforming clients honour but which is *not* enforced against a keyholder, and
 > `disposal`, which the storing operator performs and which *is*. `expires_at` is
@@ -22,7 +31,7 @@
 > computed over a **canonical JSON** serialization (§4.1.1) so that re-formatting
 > the file (key order, whitespace) no longer breaks verification.
 >
-> Earlier `1.0`/`1.1`/`1.2` cells remain openable unchanged (§12).
+> Earlier `1.0`–`1.3` cells remain openable unchanged (§12).
 
 ---
 
@@ -32,7 +41,7 @@ Cellular Defense (CD) is a browser-native, zero-knowledge encrypted document pla
 
 This document specifies the `.cell` file format, the cryptographic primitives, the access control architecture, and the security properties that can be independently verified. It is intended for security researchers, third-party implementers, and technical evaluators.
 
-All cryptographic operations use the browser's **Web Crypto API** (W3C standard). No third-party cryptographic libraries are used.
+All cryptographic operations use the browser's **Web Crypto API** (W3C standard), except Argon2id and the BLAKE2b hash it is built on (v1.4, §6.5), which Web Crypto does not offer. The reference implementation implements those two in plain JavaScript inside `cell-crypto.js` and checks them against the RFC 7693 and RFC 9106 test vectors and the Argon2 reference implementation. No third-party cryptographic libraries are used.
 
 ---
 
@@ -50,17 +59,24 @@ Every `.cell` document is protected by two independent cryptographic layers.
 - ✗ Plaintext document content
 - ✗ The Content Encryption Key (CEK)
 - ✗ Any recipient private key
-- ✗ Filename, MIME type, or file size
+- ✗ Filename, MIME type, or exact file size (v1.4 pads to a size bucket, §5.4)
 - ✗ Any key material sufficient to reconstruct a private key
+- ✗ **v1.4:** who the recipients are, and who the sender is (§4.5, §6)
 
 ### 2.2 What a `.cell` file exposes in plaintext
 
 - ✓ Format version and document ID
 - ✓ Cell creation timestamp
 - ✓ Encrypted CEK shares (useless without the recipient's private key)
-- ✓ Recipient method, label, and key fingerprint (public metadata only)
 - ✓ Lifetime and policy settings
-- ✓ Header hash and optional sender signature
+- ✓ Header hash
+- ✓ The number of access-map entries and each entry's method (`ecdh-p256`, `argon2id`, …)
+- ✓ The ciphertext length — exact in v1.0–1.3; a Padmé bucket in v1.4 (§5.4)
+- ✓ **Up to v1.3 only:** each recipient's key fingerprint and label, and the sender's
+  signature, fingerprint label and public key. v1.4 removes all of these from the
+  readable part of the file.
+- ✓ A `yubikey-prf` entry's `credential_id` (every version) — the authenticator needs
+  it, and it links cells addressed to the same security key (§6.3).
 
 ---
 
@@ -81,7 +97,7 @@ Every `.cell` document is protected by two independent cryptographic layers.
 
 ### 4.0 Binary field encoding
 
-Every binary field in a `.cell` — `iv`, `ciphertext`, `eph_spki`, `hkdf_salt`, `ct`, `salt`, `credential_id`, `prf_salt`, `spki`, `pkcs8`, `prev_hash`, `payload_hash`, `header_hash`, `header_sig`, `header_sig_key` — is **standard base64** (RFC 4648 §4): the `A–Z a–z 0–9 + /` alphabet, with `=` padding.
+Every binary field in a `.cell` — `iv`, `ciphertext`, `eph_spki`, `hkdf_salt`, `ct`, `salt`, `credential_id`, `prf_salt`, `spki`, `pkcs8`, `prev_hash`, `payload_hash`, `header_hash`, `header_sig`, `header_sig_key`, and inside the v1.4 manifest `sender.spki` and `sender.sig` — is **standard base64** (RFC 4648 §4): the `A–Z a–z 0–9 + /` alphabet, with `=` padding.
 
 It is **not** base64url. There are no `-` or `_` characters and padding is not stripped. The reference implementation uses the browser's `btoa()`/`atob()`, and `atob()` raises `InvalidCharacterError` on a `-` or `_`, so a base64url-encoded cell is not merely non-canonical — it fails to parse.
 
@@ -105,11 +121,13 @@ Decoders SHOULD accept the base64url alphabet on input for robustness. Encoders 
 }
 ```
 
+**v1.4:** `header_sig`, `header_sig_by` and `header_sig_key` are **absent**. The sender signature lives inside the encrypted manifest (§4.5). An opener MUST reject a v1.4 cell that carries any of the three, rather than verify it as a v1.3-style signature.
+
 **`doc_id`** — ULID (Universally Unique Lexicographically Sortable Identifier). 26 characters, Crockford base32. First 10 characters encode 48-bit millisecond timestamp; last 16 characters are 80-bit cryptographic random. Lexicographically sortable by creation time.
 
 **`header_hash`** — SHA-256 of the header serialization (§4.1.1). For v1.2 and v1.3 this is the **canonical** form; for v1.0/v1.1 it is `JSON.stringify(header)`. **Mandatory on every non-legacy cell**, and verified on open before any key material is touched (§10). An opener MUST reject a cell whose `header_hash` is absent rather than treat absence as licence to skip the check — otherwise deleting one field disables the header, ciphertext, and signature checks together. Note that `header_hash` is an **unkeyed** hash: it detects accidental corruption and benign re-formatting differences, but an attacker who edits the header can recompute it. Authenticity of the header against tampering comes from `header_sig` (sender identity) and the AES-GCM AAD binding (§4.4), not from `header_hash` alone.
 
-**`header_sig`** — Optional ECDSA P-256 signature over the same header serialization bytes used for `header_hash` (§4.1.1). Provides sender authenticity. The signing key is the sender's ECDH P-256 key re-imported with ECDSA usage (same P-256 scalar, different algorithm label). If null, the cell is unsigned.
+**`header_sig`** (v1.0–1.3) — Optional ECDSA P-256 signature over the same header serialization bytes used for `header_hash` (§4.1.1). Provides sender authenticity. The signing key is the sender's ECDH P-256 key re-imported with ECDSA usage (same P-256 scalar, different algorithm label). If null, the cell is unsigned.
 
 > **Signature encoding.** `header_sig` is the **raw 64-byte `r ‖ s` concatenation** (IEEE P1363 / the Web Crypto `ECDSA` output format), base64-encoded — **not** the DER `SEQUENCE { r, s }` that OpenSSL, Java, Go, and most general-purpose libraries produce and expect by default. An implementer using such a library must convert between the two forms. This is the single most likely point of failure when verifying a `.cell` outside a browser.
 
@@ -119,7 +137,7 @@ Decoders SHOULD accept the base64url alphabet on input for robustness. Encoders 
 
 ### 4.1.1 Canonical serialization (v1.2+)
 
-For v1.2 and v1.3, `header_hash`, `header_sig`, and the AAD (§4.4) are computed over a **deterministic** serialization so that re-ordering object keys or pretty-printing the JSON does not change the bytes (and therefore does not produce a false "tampered/forged" failure). The canonicalization is:
+For v1.2, v1.3 and v1.4, `header_hash`, `header_sig`, the AAD (§4.4) and the v1.4 sender-signature input (§4.5) are computed over a **deterministic** serialization so that re-ordering object keys or pretty-printing the JSON does not change the bytes (and therefore does not produce a false "tampered/forged" failure). The canonicalization is:
 
 ```
 canonicalize(v):
@@ -172,7 +190,7 @@ The last row is the rule's practical edge: a language with arbitrary-precision i
 
 **`prev_hash`** — Links this cell to a predecessor in a Mitosis chain (see §9). Null for original cells.
 
-**`payload_hash`** — SHA-256 of the raw base64-decoded ciphertext bytes. Committed inside the header so it is covered by `header_hash` and `header_sig`. If the ciphertext is modified after sealing, this check fails on open.
+**`payload_hash`** — SHA-256 of the raw base64-decoded ciphertext bytes. Committed inside the header so it is covered by `header_hash` (and, up to v1.3, `header_sig`). If the ciphertext is modified after sealing, this check fails on open.
 
 **`threshold`** — Quorum requirement. `required` is M; `of_total` is N. For non-quorum cells: `required = 1`. See §6 for Shamir Secret Sharing.
 
@@ -181,11 +199,13 @@ The last row is the rule's practical edge: a language with arbitrary-precision i
 ```json
 "payload": {
   "alg":      "AES-256-GCM",
-  "encoding": "base64+gzip",
+  "encoding": "base64+gzip",          // "base64+gzip+padme" in v1.4
   "iv":       "<base64 12-byte IV>",
   "ciphertext": "<base64 — AES-256-GCM encrypted content>"
 }
 ```
+
+`encoding` is informational; openers route on `version`, never on this field.
 
 The ciphertext contains a manifest-prefixed gzip stream (see §5). The AES-GCM authentication tag is appended to the ciphertext by WebCrypto and verified automatically on decryption.
 
@@ -198,9 +218,12 @@ The advisory metadata that is fixed *before* encryption — `prev_hash`, `thresh
 ```
 meta = [ header.prev_hash, header.threshold, header.lifetime, header.policy ]   // array, fixed order
 AAD  = UTF-8 bytes of:
+         canonicalize({ format: version, prev_hash, threshold, lifetime, policy })   for v1.4
          canonicalize(meta)        for v1.2 and v1.3
          JSON.stringify(meta)      for v1.1
 ```
+
+v1.4 uses an object that includes the format version. Relabelling a v1.4 cell as `1.3` therefore fails the tag even though the two versions share a canonical `header_hash`, which keeps a downgrade from routing the cell around the v1.4 checks.
 
 `access_map` and `payload_hash` are **not** in the AAD because they do not exist yet when the body is encrypted (the access map wraps the freshly generated CEK; `payload_hash` is derived from the resulting ciphertext). They are instead covered by `header_hash`/`header_sig`.
 
@@ -212,6 +235,42 @@ AAD  = UTF-8 bytes of:
 
 Cells without a `version` (legacy v2.x) and v1.0 cells carry no AAD; they decrypt with empty AAD.
 
+### 4.5 Sender signature — v1.4
+
+In v1.4 the signature is made **before** encryption and carried inside the encrypted manifest (§5.1), so only someone who can open the cell learns who signed it. It is optional.
+
+```json
+"sender": {
+  "spki": "<base64 SPKI of the signer's P-256 key>",
+  "to":   ["<fingerprint>", "..."],
+  "sig":  "<base64 raw 64-byte r || s>"
+}
+```
+
+`to` lists the fingerprints (§13.3) of the `ecdh-p256` recipients the signer addressed, sorted. Passphrase and security-key recipients are not listed. `sig` is ECDSA P-256 / SHA-256, raw `r ‖ s` as in §4.1, over the UTF-8 bytes of:
+
+```
+canonicalize({
+  purpose:        "cell-sender-signature",
+  version:        cell.version,
+  doc_id:         cell.doc_id,
+  created_at:     cell.created_at,
+  aad:            <the cell's AAD (§4.4) as a string>,
+  manifest:       <the manifest without its "sender" key>,
+  content_sha256: base64(SHA-256(file bytes)),
+  sender_spki:    sender.spki,
+  to:             sender.to
+})
+```
+
+**Verification** happens after decryption (§10 step 5). The opener rebuilds this input from the cell and the decrypted manifest and verifies `sig` against `sender.spki`. The signer is the fingerprint of `sender.spki`, **recomputed**, never a claimed value. A failure rejects the cell.
+
+**What it adds over v1.3.**
+- **Nobody outside learns the sender.** The relay, the storage operator and anyone holding the file see no signer key or fingerprint.
+- **It covers more.** It covers `doc_id` and `created_at`, which are outside the AAD and could previously be edited freely, and the content directly.
+- **It names the intended recipients.** A recipient who decrypts and re-encrypts the file for someone else can carry the signature along, but the new holder sees from `to` that they were not an addressee. An opener holding a key SHOULD warn when its own fingerprint is not in `to`.
+- **A third party cannot strip it.** It is inside the authenticated ciphertext, so only someone holding the CEK can produce a version without it. (Anyone can still create a new, unsigned cell from scratch, so "unsigned" never proves anything.)
+
 ---
 
 ## 5. Encrypted Payload Structure
@@ -222,7 +281,7 @@ The plaintext fed into AES-256-GCM is:
 [ 4 bytes LE uint32 — manifest length ][ manifest JSON bytes ][ file bytes ]
 ```
 
-This entire concatenation is gzip-compressed and then encrypted. The server and any observer see only ciphertext — filename, MIME type, and file size are invisible.
+This entire concatenation is gzip-compressed and then encrypted. In v1.4 the gzip stream is first framed and padded (§5.4). The server and any observer see only ciphertext — filename, MIME type, and file size are invisible.
 
 ### 5.1 Manifest JSON
 
@@ -231,7 +290,8 @@ This entire concatenation is gzip-compressed and then encrypted. The server and 
   "filename":     "document.pdf",
   "content_type": "application/pdf",
   "size":         284921,
-  "meta":         { "note": "Q3 escrow docs — call before opening", "case": "2026-0417" }
+  "meta":         { "note": "Q3 escrow docs — call before opening", "case": "2026-0417" },
+  "sender":       { "spki": "...", "to": ["..."], "sig": "..." }      // v1.4, optional — §4.5
 }
 ```
 
@@ -245,6 +305,7 @@ The manifest is recovered after successful decryption by reading the 4-byte leng
 original file bytes
   → prepend [4-byte manifest len][manifest JSON]
   → gzip compress entire buffer
+  → v1.4 only: frame and pad — [4-byte LE gzip length][gzip][zeros] (§5.4)
   → AES-256-GCM encrypt with random 96-bit IV and 256-bit CEK
   → base64 encode
   → stored in payload.ciphertext
@@ -256,17 +317,39 @@ original file bytes
 payload.ciphertext
   → base64 decode
   → AES-256-GCM decrypt (CEK + IV) — auth tag verified automatically
+  → v1.4 only: read the 4-byte LE length; check the rest is zero; take the gzip bytes (§5.4)
   → gzip decompress
   → read 4-byte LE length prefix
   → parse manifest JSON (that many bytes)
   → remaining bytes = original file content
 ```
 
+### 5.4 Padding — v1.4
+
+Before encryption the gzip stream `gz` is framed and padded:
+
+```
+body = LE32(len(gz)) || gz || 0x00 × (padme(4 + len(gz)) − 4 − len(gz))
+
+padme(L):                         // Padmé, Nikitin et al., PETS 2019
+  if L ≤ 512: return 512          // floor: short messages share one size
+  E = floor(log2 L)               // compute on integers (bit length − 1), not floats
+  S = floor(log2 E) + 1
+  step = 2^(E − S)
+  return ceil(L / step) × step
+```
+
+Padmé leaks O(log log L) bits of the length and costs at most about 12 % in size; the 512-byte floor hides the size of short messages entirely. Openers MUST reject a body whose framed length runs past its end, or whose padding bytes are not all zero.
+
+Padding hides the content's size within a bucket. It does not hide the number of access-map entries, the file's timing, or the coarse size class. Bodies of 2^32 bytes or more are out of scope.
+
 ---
 
 ## 6. Access Map
 
 Each entry in `header.access_map` holds a wrapped copy of the CEK (or a Shamir share of the CEK for quorum cells) for one recipient.
+
+**Blind entries (v1.4).** Writers MUST NOT include `fingerprint` or `label` in a v1.4 entry, and readers MUST NOT rely on them. Up to v1.3 they told every holder of the file who it was for. An opener finds its entry by **trial decryption**: it tries each of its keys (or passphrases) against each entry of a matching `method`. AES-KW's built-in integrity check (RFC 3394) rejects a wrong key with probability 1 − 2⁻⁶⁴, so a failed unwrap means "not mine", not an error. For an opener with *k* keys, a map of *n* entries costs at most *n × k* ECDH operations. To bound that, openers MUST refuse a map of more than **256** entries before trying any key.
 
 ### 6.1 ECDH P-256 entry
 
@@ -293,6 +376,8 @@ hkdf_salt           = 32 random bytes
 hkdf_key            = HKDF-SHA256(shared_bits, salt, info="cellular-defense-cek-wrap-v1", 256 bits)
 wrapped_cek         = AES-KW(cek_or_share, hkdf_key)
 ```
+
+In v1.4 the entry has neither `label` nor `fingerprint`: `{ "method", "share_index"?, "wrapped_cek" }`.
 
 **CEK unwrapping (recipient):**
 
@@ -325,6 +410,8 @@ base_key   = PBKDF2-SHA256(passphrase, salt, 600000 iterations) → AES-KW 256-b
 wrapped    = AES-KW(cek_or_share, base_key)
 ```
 
+PBKDF2 is not memory-hard, so a GPU attacker pays far less per guess than with Argon2id. v1.4 writers SHOULD use `argon2id` (§6.5); `pbkdf2` stays valid for reading and writing. A v1.4 `pbkdf2` entry is blind like every other. The passphrase is the UTF-8 of the string as given, with no Unicode normalization.
+
 ### 6.3 YubiKey PRF (FIDO2) entry
 
 ```json
@@ -343,11 +430,43 @@ wrapped    = AES-KW(cek_or_share, base_key)
 
 The PRF output (32 bytes) is used directly as the AES-KW wrapping key. Requires HTTPS or localhost, Chrome or Chromium, and a FIDO2 key with the hmac-secret extension (YubiKey 5 series, firmware 5.2+).
 
+**Linkability.** WebAuthn needs `credential_id` to ask the right authenticator, so it stays in the readable entry in every version, v1.4 included. Two cells addressed to the same security key are therefore linkable by anyone holding both. v1.4 drops the entry's `fingerprint` and `label` but cannot drop this.
+
 ### 6.4 `share_index`
 
 For quorum cells (`threshold.required > 1`), each access map entry holds one Shamir share. `share_index` is the x-coordinate of that share (1-indexed, matching the share's polynomial evaluation point).
 
 For non-quorum cells (`threshold.required = 1`) each entry holds the full CEK and the reference implementation **omits the `share_index` key entirely** rather than writing `null`. Both forms are accepted on read. Note that the choice is not cosmetic: `access_map` is covered by `header_hash`, and the canonical serialization of §4.1.1 drops `undefined` but preserves an explicit `null`, so a cell written with `"share_index": null` has a different `header_hash` from an otherwise identical cell written without the key. Each remains internally consistent and verifies correctly; they are simply not byte-identical. Writers SHOULD omit the key.
+
+### 6.5 Argon2id (passphrase) entry — v1.4
+
+```json
+{
+  "method":      "argon2id",
+  "share_index": <integer>,              // quorum cells only
+  "wrapped_cek": {
+    "salt": "<base64 — 16 random bytes>",
+    "m":    65536,                       // memory, KiB
+    "t":    3,                           // passes
+    "p":    4,                           // lanes
+    "ct":   "<base64 — AES-KW wrapped CEK or CEK share>"
+  }
+}
+```
+
+**Key derivation:**
+
+```
+kek     = Argon2id(password = UTF-8(NFC(passphrase)), salt, m, t, p,
+                   version 0x13, tag length 32, no secret, no associated data)   // RFC 9106
+wrapped = AES-KW(cek_or_share, kek)
+```
+
+- **Parameters.** Writers SHOULD use RFC 9106 §4's second recommended option, `m = 65536` (64 MiB), `t = 3`, `p = 4`.
+- **Bounds.** Openers MUST refuse `m < 19456` (OWASP's floor), `m > 1048576` (1 GiB), `t` outside 1–16, `p` outside 1–16, `t = 1` with `m < 47104`, and a salt shorter than 16 bytes. Below the floor the passphrase is barely protected; above the ceiling a hostile cell can exhaust the opener's memory.
+- **Normalization.** Unlike `pbkdf2`, the passphrase is **NFC-normalized** first, so the same words typed with a composed or a decomposed accent on two devices are one passphrase.
+
+Single-threaded JavaScript computes the lanes one after another, so `p = 4` costs the same time as `p = 1` while matching the RFC's parameter set. On a Raspberry Pi 5 the reference implementation takes about 4 seconds at the default parameters.
 
 ---
 
@@ -504,7 +623,7 @@ Policy is enforced by the application layer only; it is not a cryptographic acce
 
 ## 10. Audit Chain
 
-The cell format provides a tamper-evident audit chain. Serialization below is the canonical form (§4.1.1) for v1.2 and v1.3, or `JSON.stringify` for v1.0/v1.1:
+The cell format provides a tamper-evident audit chain. Serialization below is the canonical form (§4.1.1) for v1.2–v1.4, or `JSON.stringify` for v1.0/v1.1:
 
 ```
 file bytes
@@ -512,7 +631,10 @@ file bytes
        └─ payload_hash = SHA-256(raw ciphertext bytes)
             └─ committed inside header (covered by header_hash)
                  └─ header_hash = SHA-256(serialize(header))
-                      └─ header_sig = ECDSA-SHA256(serialize(header), sender_privkey)   [optional]
+                      └─ header_sig = ECDSA-SHA256(serialize(header), sender_privkey)   [optional, v1.0–1.3]
+
+v1.4: the sender signature is inside the ciphertext (§4.5) and covers content, manifest,
+AAD, doc_id, created_at and the intended recipients.
 ```
 
 On open, the verifier checks in order:
@@ -520,12 +642,13 @@ On open, the verifier checks in order:
 0. Advisory lifetime gates (§8.1) — cheapest of all, and they need nothing but the clock.
 1. `header_hash` is **present** (reject if absent, §4.1) and matches `SHA-256(serialize(cell.header))`. Benign reformatting is tolerated by canonicalization.
 2. `payload_hash` (inside header) matches `SHA-256(base64decode(payload.ciphertext))`.
-3. If `header_sig` present: ECDSA-SHA256 over `serialize(cell.header)` verifies against `header_sig_key`.
-4. **On decrypt**, the AES-GCM tag verifies the ciphertext *and* the AAD-bound metadata (§4.4); a mismatch — including any edit to `threshold`/`lifetime`/`policy`/`prev_hash` that slipped past the unkeyed `header_hash` — fails here.
+3. Up to v1.3: if `header_sig` is present, ECDSA-SHA256 over `serialize(cell.header)` verifies against `header_sig_key`. v1.4: `header_sig`, `header_sig_by` and `header_sig_key` MUST be absent, and the access map MUST hold at most 256 entries (§6).
+4. **On decrypt**, the AES-GCM tag verifies the ciphertext *and* the AAD-bound metadata (§4.4); a mismatch — including any edit to `threshold`/`lifetime`/`policy`/`prev_hash` that slipped past the unkeyed `header_hash`, or (v1.4) a relabelled version — fails here.
+5. v1.4 only, after decryption: the padding is well-formed (§5.4), and if the manifest carries `sender`, its signature verifies (§4.5).
 
-**Ordering is normative.** Steps 0–3 MUST complete before *any* key material is touched — before the access-map loop, before AES-KW unwrapping (itself a decryption), before a Shamir quorum is assembled, and before a passphrase entry runs its 600,000-iteration PBKDF2 derivation. An opener that unwraps first and verifies afterwards does expensive, interactive work on behalf of a cell it is about to reject, and performs a decryption under a header it has not authenticated. Step 4 is intrinsic to the body decryption and necessarily comes last.
+**Ordering is normative.** Steps 0–3 MUST complete before *any* key material is touched — before the access-map loop, before AES-KW unwrapping (itself a decryption), before a Shamir quorum is assembled, and before a passphrase entry runs its 600,000-iteration PBKDF2 derivation. An opener that unwraps first and verifies afterwards does expensive, interactive work on behalf of a cell it is about to reject, and performs a decryption under a header it has not authenticated. Step 4 is intrinsic to the body decryption, and step 5 needs its output, so both necessarily come last.
 
-**What this does and does not cover.** Together these detect tampering with the ciphertext, with the AAD-bound metadata, and — provided `header_hash` is present, which step 1 now enforces — with the rest of the header including `access_map`. They do **not** detect the *removal* of `header_sig` (§4.1): an attacker who strips the signature produces something indistinguishable from an unsigned cell. Sender authenticity must be established by checking the verified fingerprint against an expected value, not by the absence of an error.
+**What this does and does not cover.** Together these detect tampering with the ciphertext, with the AAD-bound metadata, and — provided `header_hash` is present, which step 1 now enforces — with the rest of the header including `access_map`. Up to v1.3 they do **not** detect the *removal* of `header_sig` (§4.1): an attacker who strips the signature produces something indistinguishable from an unsigned cell. In v1.4 a third party cannot strip the signature, because it is inside the authenticated ciphertext. They can still present a different, unsigned cell. Sender authenticity must be established by checking the verified fingerprint against an expected value, not by the absence of an error.
 
 ---
 
@@ -541,27 +664,29 @@ cell₁: prev_hash = null
 
 `prev_hash` equals the `header_hash` of the immediately preceding cell in the chain. This creates an auditable chain of custody for the document's access history.
 
-`prev_hash` is included in the header and thus covered by `header_hash`, `header_sig`, and (since v1.1) the AES-GCM AAD (§4.4). Tampering with the lineage pointer is detected by the audit chain.
+`prev_hash` is included in the header and thus covered by `header_hash`, `header_sig` (up to v1.3), the v1.4 sender signature through the AAD, and (since v1.1) the AES-GCM AAD (§4.4). Tampering with the lineage pointer is detected by the audit chain.
 
 ---
 
 ## 12. Format Versioning
 
-The `version` field identifies the cell format version. The reference implementation supports exactly the versions listed in `SUPPORTED_VERSIONS = { "1.0", "1.1", "1.2", "1.3" }`. New cells are written as **`1.3`** (`CELL_FORMAT_VERSION`).
+The `version` field identifies the cell format version. The reference implementation supports exactly the versions listed in `SUPPORTED_VERSIONS = { "1.0", "1.1", "1.2", "1.3", "1.4" }`. New cells are written as **`1.4`** (`CELL_FORMAT_VERSION`); a caller may still ask for `1.3`, for recipients whose software predates 1.4.
 
 | Version | Status | Notes |
 |---------|--------|-------|
 | `1.0` | Supported (read) | Original format. `header_hash`/`header_sig` over `JSON.stringify(header)`; no AAD. |
 | `1.1` | Supported (read) | Adds AES-GCM AAD over `JSON.stringify([prev_hash, threshold, lifetime, policy])`. Hash/sig still over `JSON.stringify(header)`. |
 | `1.2` | Supported (read) | Canonical serialization (§4.1.1) for `header_hash`/`header_sig`/AAD. Flat `lifetime` (`expires_at`/`on_expiry`). |
-| `1.3` | **Current (write)** | `lifetime` split by enforcer into `advisory` and `disposal`; `expires_at` renamed `retain_until` (§8). Serialization and AAD rules unchanged from 1.2. This specification. |
+| `1.3` | Supported (read; write on request) | `lifetime` split by enforcer into `advisory` and `disposal`; `expires_at` renamed `retain_until` (§8). Serialization and AAD rules unchanged from 1.2. |
+| `1.4` | **Current (write)** | Blind access-map entries and trial decryption (§6); sender signature inside the encrypted manifest (§4.5); Padmé-padded body (§5.4); `argon2id` passphrase method (§6.5); format version in the AAD (§4.4). This specification. |
 
-Open is version-gated: each cell is verified and AAD-bound using the serialization rules of *its own* `version`, so `1.0`/`1.1`/`1.2` cells continue to open unchanged, flat `lifetime` included.
+Open is version-gated: each cell is verified and AAD-bound using the serialization rules of *its own* `version`, so `1.0`–`1.3` cells continue to open unchanged, flat `lifetime` included.
 
 Two sets govern that routing, and implementers should hold them as sets rather than as inline comparisons:
 
-- **Canonical serialization** applies to `{ "1.2", "1.3" }`. Anything else uses `JSON.stringify`.
-- **AAD binding** applies to `{ "1.1", "1.2", "1.3" }`. Anything else decrypts with empty AAD.
+- **Canonical serialization** applies to `{ "1.2", "1.3", "1.4" }`. Anything else uses `JSON.stringify`.
+- **AAD binding** applies to `{ "1.1", "1.2", "1.3", "1.4" }`. Anything else decrypts with empty AAD.
+- **v1.4 features**, one set each, `{ "1.4" }`: the version in the AAD, the padded body, the inner signature, and blind entries.
 
 An implementation that adds a version to `SUPPORTED_VERSIONS` but leaves an inline `version === "1.2"` test elsewhere will silently drop canonical serialization, or decrypt new cells with no AAD, with no error raised at any point. The reference implementation keeps `CANONICAL_VERSIONS` and `AAD_VERSIONS` as explicit sets for exactly this reason.
 
@@ -609,7 +734,7 @@ Contains the full key record including private key. Must be stored securely.
 
 `fingerprint = toHex(SHA-256(SPKI bytes)).slice(0, 16)`
 
-16 lowercase hex characters (first 8 bytes of the SHA-256 of the SPKI-encoded public key). Used to match access map entries to available keys.
+16 lowercase hex characters (first 8 bytes of the SHA-256 of the SPKI-encoded public key). Up to v1.3 it matched access-map entries to available keys. In v1.4 it appears only inside the encrypted manifest (`sender.to`) and in key files and directories.
 
 ---
 
@@ -621,26 +746,30 @@ Contains the full key record including private key. Must be stored securely.
 | CEK wrapping (ECDH) | AES-KW | 256-bit key derived via HKDF |
 | ECDH key exchange | ECDH P-256 | Ephemeral sender keypair per recipient |
 | Key derivation | HKDF-SHA256 | 256-bit output, 32-byte random salt, `info = "cellular-defense-cek-wrap-v1"` |
-| CEK wrapping (passphrase) | AES-KW | 256-bit key via PBKDF2-SHA256, 600,000 iterations, 32-byte salt |
+| CEK wrapping (passphrase, v1.4) | AES-KW | 256-bit key via Argon2id v0x13 (RFC 9106), default m = 64 MiB, t = 3, p = 4, 16-byte salt, NFC-normalized UTF-8 passphrase (§6.5) |
+| CEK wrapping (passphrase, legacy) | AES-KW | 256-bit key via PBKDF2-SHA256, 600,000 iterations, 32-byte salt |
+| Hash inside Argon2id | BLAKE2b | RFC 7693, unkeyed, 1–64-byte output |
+| Size padding (v1.4) | Padmé | LE32 length frame, zero padding to `padme(L)`, 512-byte floor (§5.4) |
 | CEK wrapping (YubiKey) | AES-KW | 256-bit key = PRF output (hmac-secret extension, 32 bytes) |
 | GF(256) Shamir SSS | Over GF(2⁸) | Irreducible poly 0x11b (AES polynomial) |
 | Metadata binding | AES-256-GCM AAD | `prev_hash`/`threshold`/`lifetime`/`policy` bound to ciphertext (v1.1+) |
-| Header signing | ECDSA P-256 + SHA-256 | Signs canonical header bytes (§4.1.1) for v1.2+; `JSON.stringify(header)` for v1.0/v1.1. Raw 64-byte `r ‖ s` (IEEE P1363), **not** DER — see §4.1 |
+| Header signing (v1.0–1.3) | ECDSA P-256 + SHA-256 | Signs canonical header bytes (§4.1.1) for v1.2+; `JSON.stringify(header)` for v1.0/v1.1. Raw 64-byte `r ‖ s` (IEEE P1363), **not** DER — see §4.1 |
+| Sender signing (v1.4) | ECDSA P-256 + SHA-256 | Inside the encrypted manifest, over a canonical input naming content, manifest, AAD, cell identity and intended recipients (§4.5). Raw `r ‖ s` |
 | Audit hashes | SHA-256 | `header_hash`, `payload_hash`, fingerprints |
 | Document ID | ULID | 48-bit ms timestamp + 80-bit CSPRNG, Crockford base32 |
 | Randomness | `crypto.getRandomValues()` | Browser CSPRNG — never `Math.random()` |
 
-All operations use the **Web Crypto API** (`crypto.subtle`). Requires a secure context — `https://`, `localhost`, or a `file://` document.
+All operations except Argon2id and BLAKE2b use the **Web Crypto API** (`crypto.subtle`); those two are plain JavaScript in the reference implementation (§1). Requires a secure context — `https://`, `localhost`, or a `file://` document.
 
 ---
 
 ## 15. Complete Example
 
-A minimal v1.3 cell encrypted for a single ECDH recipient, no quorum, permanent lifetime, unsigned. The `prev_hash`/`threshold`/`lifetime`/`policy` are additionally bound as AES-GCM AAD (§4.4), and `header_hash` is over the canonical serialization (§4.1.1):
+A minimal v1.4 cell encrypted for a single ECDH recipient, no quorum, permanent lifetime. The entry names no one (§6). If the cell is signed, the signature is inside the ciphertext (§4.5), so this view is the same either way. `version` with `prev_hash`/`threshold`/`lifetime`/`policy` is bound as AES-GCM AAD (§4.4), and `header_hash` is over the canonical serialization (§4.1.1):
 
 ```json
 {
-  "version": "1.3",
+  "version": "1.4",
   "doc_id": "01JXXXXXXXXXXXXXXXXXXXXXXXXX",
   "created_at": 1780531200,
   "header": {
@@ -668,8 +797,6 @@ A minimal v1.3 cell encrypted for a single ECDH recipient, no quorum, permanent 
     "access_map": [
       {
         "method": "ecdh-p256",
-        "label": "Alice",
-        "fingerprint": "a1b2c3d4e5f6a7b8",
         "wrapped_cek": {
           "eph_spki":  "<base64 — ephemeral public key>",
           "hkdf_salt": "<base64 — 32 random bytes>",
@@ -680,14 +807,11 @@ A minimal v1.3 cell encrypted for a single ECDH recipient, no quorum, permanent 
     "payload_hash": "<base64 — SHA-256 of raw ciphertext bytes>"
   },
   "header_hash":    "<base64 — SHA-256 of canonicalize(header)>",
-  "header_sig":     null,
-  "header_sig_by":  null,
-  "header_sig_key": null,
   "payload": {
     "alg":        "AES-256-GCM",
-    "encoding":   "base64+gzip",
+    "encoding":   "base64+gzip+padme",
     "iv":         "<base64 — 12-byte IV>",
-    "ciphertext": "<base64 — gzip([4-byte len][manifest JSON][file bytes]) encrypted>"
+    "ciphertext": "<base64 — [LE32 len][gzip([4-byte len][manifest JSON][file bytes])][zero pad] encrypted>"
   }
 }
 ```
@@ -700,16 +824,19 @@ A minimal v1.3 cell encrypted for a single ECDH recipient, no quorum, permanent 
 |----------|-----------|
 | Confidentiality | AES-256-GCM — AEAD; IND-CCA2 secure under unique nonces |
 | Authenticity (content) | AES-256-GCM auth tag — verified on decrypt |
-| Authenticity (metadata) | AES-GCM AAD binds `threshold`/`lifetime`/`policy`/`prev_hash` — tamper-evident, not strippable/downgradeable (v1.1+) |
+| Authenticity (metadata) | AES-GCM AAD binds `threshold`/`lifetime`/`policy`/`prev_hash` (v1.1+) and the format version (v1.4) — tamper-evident, not strippable/downgradeable |
 | Integrity (header) | SHA-256 `header_hash`, mandatory and checked before any key use (unkeyed — corruption/format check; authenticity from `header_sig` + AAD) |
 | Integrity (ciphertext) | SHA-256 `payload_hash` committed in header |
-| Sender authenticity | ECDSA P-256 `header_sig` — optional, per-cell; trust anchored to `header_sig_key` fingerprint, not the `header_sig_by` label |
+| Sender authenticity | v1.4: ECDSA P-256 inside the encrypted manifest — optional; visible only to recipients; binds content, cell identity and intended recipients; trust anchored to the recomputed fingerprint of `sender.spki` (§4.5). v1.0–1.3: `header_sig`, readable by anyone, anchored to `header_sig_key` |
+| Recipient privacy (v1.4) | Blind access-map entries — the readable file does not name recipients; openers use trial decryption (§6). Residual: entry count, entry methods, and `yubikey-prf` credential IDs |
+| Size privacy (v1.4) | Padmé padding with a 512-byte floor — the ciphertext reveals a size bucket, not the size (§5.4) |
+| Passphrase strength (v1.4) | Argon2id, memory-hard, with refused-below and refused-above bounds on its parameters (§6.5) |
 | Reformat resilience | Canonical serialization — key-reorder/whitespace does not break hash/sig/AAD (v1.2+) |
 | Forward secrecy (per-cell) | Fresh ephemeral ECDH keypair per recipient per cell |
 | Key isolation | Each recipient's CEK copy uses independent ephemeral keypair |
 | Metadata confidentiality | Filename, type, size encrypted inside payload (§5) |
 | Threshold access | Shamir SSS — M shares required; **fewer than M** shares reveal nothing (information-theoretically) |
-| Lineage integrity | `prev_hash` covered by `header_hash` and `header_sig` |
+| Lineage integrity | `prev_hash` covered by `header_hash`, the AAD, and the signature (`header_sig` up to v1.3; the inner signature in v1.4) |
 | Version safety | Unknown versions rejected with clear error |
 | Disposal (`lifetime.disposal`) | **Enforced** — the operator's sweep deletes or archives the stored ciphertext on schedule, without reading it. Acts on every party that has not already taken a copy (§8.2) |
 | Retention (`lifetime.advisory`) | **Not enforced against a keyholder.** Tamper-evident only: the AAD binding guarantees the recipient sees the sender's true values, and no third party can alter them. A recipient holding the CEK can disregard them entirely (§8.1) |
@@ -728,6 +855,7 @@ A minimal v1.3 cell encrypted for a single ECDH recipient, no quorum, permanent 
 | 1.3 (corrections) | 2026-08-09 | Documentation corrections from an accuracy review that verified every claim against the reference implementation. **No format or wire change; no cell ever written is affected.** (a) Binary fields are **standard base64**, not base64url as stated since v1.0 — the document was wrong, the implementation was always right, and following the old text produced unparseable cells (§4.0). (b) `header_sig` is raw 64-byte `r ‖ s` (IEEE P1363), not DER — previously unstated, and the one gap that defeated an independent spec-only verification (§4.1). (c) `header_hash` is mandatory and its absence is a rejection; previously an opener could treat a missing hash as licence to skip the header, ciphertext and signature checks together (§4.1, §10). (d) Verification order is now normative: integrity precedes all key use (§10). (e) Signature *removal* is documented as undetectable (§4.1, §10). (f) §16 said "N-1 shares reveal nothing" where it meant fewer than M — N-1 is a quorum's worth. (g) `share_index` is omitted, not `null`, on non-quorum cells (§6.4). See `docs/REVIEW-2026-08-09.md`. |
 | 1.3 (corrections 2) | 2026-08-23 | Three documentation corrections, found by a line-by-line review of the specification against itself and against the exposition built on it. **No format or wire change; no cell ever written is affected.** (a) §15's complete example wrote `"share_index": null` on a non-quorum cell, contradicting §6.4 and correction (g) above — the 2026-08-09 correction reached the normative text and missed the example, so the one artifact an implementer is most likely to copy still demonstrated the discouraged form. Example corrected to omit the key. (b) §10 gave the canonical serialization as applying to "v1.2", omitting v1.3, which §4.1.1 and §12 both place in `CANONICAL_VERSIONS`. (c) §14 gave the secure-context requirement as "HTTPS or localhost", omitting `file://` — a legitimate secure context and the one the offline, air-gapped sealing path depends on. |
 | 1.3 (corrections 3) | 2026-08-23 | §4.1.1 made self-contained. **No format or wire change; no cell ever written is affected, and the reference implementation is unmodified.** The canonical serialization was defined by deferring to JavaScript's `JSON.stringify`, which is exact but silently imports four rules that are not the default behaviour of a JSON encoder in any other language: binary64 number formatting per ECMA-262 `Number::toString`, UTF-16 code-unit key ordering, the precise escape set (notably that `/`, `<`, `>`, `&`, `U+2028` and `U+2029` are **not** escaped), and — for v1.0/v1.1 only — the requirement that a parser preserve object key order at all. Each is now stated normatively with a worked table, because each independently produced a `header_hash` that never matched during the Python, Go, Rust and Java ports, and the failure carries no indication of its cause. Machine-checkable vectors accompany them at `conformance/vectors/canonical.json`. |
+| 1.4 | 2026-10-14 | Metadata privacy. (a) Access-map entries carry no `fingerprint` or `label`; openers find their entry by trial decryption, relying on AES-KW's integrity check, and refuse maps of more than 256 entries (§6). (b) The sender signature moves inside the encrypted manifest and now covers the content, manifest, AAD, `doc_id`, `created_at` and the intended key recipients (`to`); `header_sig`/`header_sig_by`/`header_sig_key` must be absent (§4.5). (c) The decrypted body is length-framed and Padmé-padded with a 512-byte floor (§5.4). (d) New `argon2id` passphrase method, RFC 9106 parameters, NFC-normalized passphrase, bounded on open (§6.5). (e) The AAD is an object that includes the format version (§4.4). Motivated by an audit of what a relay operator learns: the readable header named the recipients (labels often fell back to an email address) and the signer, and the ciphertext size was exact. `1.0`–`1.3` remain readable; `1.3` remains writable on request. Conformance vectors added for every v1.4 rule (`conformance/vectors`, `v14-*`, `reject-v14-*`). |
 
 ---
 
