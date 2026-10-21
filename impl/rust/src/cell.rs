@@ -14,20 +14,29 @@ use crate::lifetime::{self, Lifetime};
 use crate::ulid::ulid;
 
 /// The version this crate writes.
-pub const CELL_FORMAT_VERSION: &str = "1.3";
+pub const CELL_FORMAT_VERSION: &str = "1.4";
 
 /// Versions this crate can read (spec §12).
-pub const SUPPORTED_VERSIONS: &[&str] = &["1.0", "1.1", "1.2", "1.3"];
+pub const SUPPORTED_VERSIONS: &[&str] = &["1.0", "1.1", "1.2", "1.3", "1.4"];
 
 /// Versions whose hash/signature/AAD use the canonical serialization (§4.1.1).
 ///
 /// Held as a list on purpose. §12 warns that adding a version to the supported
 /// set while leaving an inline `version == "1.2"` test elsewhere silently drops
 /// canonicalization, or decrypts new cells with no AAD, with no error raised.
-pub const CANONICAL_VERSIONS: &[&str] = &["1.2", "1.3"];
+pub const CANONICAL_VERSIONS: &[&str] = &["1.2", "1.3", "1.4"];
 
 /// Versions that bind metadata to the ciphertext as AES-GCM AAD (§4.4).
-pub const AAD_VERSIONS: &[&str] = &["1.1", "1.2", "1.3"];
+pub const AAD_VERSIONS: &[&str] = &["1.1", "1.2", "1.3", "1.4"];
+
+/// v1.4 features, each gated by its own list (same reasoning as above).
+pub const VERSIONED_AAD_VERSIONS: &[&str] = &["1.4"];
+pub const PADDED_VERSIONS: &[&str] = &["1.4"];
+pub const INNER_SIG_VERSIONS: &[&str] = &["1.4"];
+pub const BLIND_ENTRY_VERSIONS: &[&str] = &["1.4"];
+
+/// Openers refuse a larger access map before trying any key (§6).
+pub const MAX_ACCESS_ENTRIES: usize = 256;
 
 /// Bytes that `header_hash` and `header_sig` cover (§4.1.1).
 ///
@@ -52,6 +61,15 @@ pub fn cell_aad(header: &Value, version: &str) -> Result<Option<Vec<u8>>> {
         return Ok(None);
     }
     let get = |key: &str| header.get(key).cloned().unwrap_or(Value::Null);
+    if VERSIONED_AAD_VERSIONS.contains(&version) {
+        // v1.4: an object that includes the version, so relabelling fails the tag.
+        let mut m = Map::new();
+        m.insert("format".into(), Value::String(version.to_string()));
+        for k in ["prev_hash", "threshold", "lifetime", "policy"] {
+            m.insert(k.into(), get(k));
+        }
+        return Ok(Some(canonical_bytes(&Value::Object(m))?));
+    }
     let meta = Value::Array(vec![
         get("prev_hash"),
         get("threshold"),
@@ -72,6 +90,8 @@ pub fn cell_aad(header: &Value, version: &str) -> Result<Option<Vec<u8>>> {
 pub enum Recipient {
     Ecdh { spki: String, label: String },
     Passphrase { passphrase: String, label: String },
+    /// v1.4 passphrase entry. `params` is `(m KiB, t, p)`; `None` = defaults.
+    Argon2id { passphrase: String, label: String, params: Option<(u32, u32, u32)> },
 }
 
 impl Recipient {
@@ -91,6 +111,15 @@ impl Recipient {
         })
     }
 
+    /// Wrap under a passphrase with Argon2id (v1.4 only).
+    pub fn argon2id(passphrase: &str, label: &str) -> Self {
+        Recipient::Argon2id {
+            passphrase: passphrase.to_string(),
+            label: if label.is_empty() { "Passphrase".into() } else { label.to_string() },
+            params: None,
+        }
+    }
+
     /// Wrap under a passphrase.
     pub fn passphrase(passphrase: &str, label: &str) -> Self {
         Recipient::Passphrase {
@@ -100,7 +129,13 @@ impl Recipient {
     }
 }
 
-fn wrap_entry(recipient: &Recipient, key_material: &[u8], share_index: Option<usize>) -> Result<Value> {
+fn wrap_entry(
+    recipient: &Recipient,
+    key_material: &[u8],
+    share_index: Option<usize>,
+    version: &str,
+) -> Result<Value> {
+    let blind = BLIND_ENTRY_VERSIONS.contains(&version);
     let mut entry = Map::new();
     let (fingerprint, wrapped, label, method) = match recipient {
         Recipient::Ecdh { spki, label } => {
@@ -126,11 +161,29 @@ fn wrap_entry(recipient: &Recipient, key_material: &[u8], share_index: Option<us
                 "pbkdf2",
             )
         }
+        Recipient::Argon2id { passphrase, label, params } => {
+            if !blind {
+                return Err(Error::Malformed("argon2id entries need format v1.4".into()));
+            }
+            let (salt, m, t, p, ct) =
+                crypto::argon2id_wrap_cek(key_material, passphrase, *params, None)?;
+            (
+                String::new(),
+                json!({ "salt": salt, "m": m, "t": t, "p": p, "ct": ct }),
+                label.clone(),
+                "argon2id",
+            )
+        }
     };
 
-    entry.insert("label".into(), Value::String(label));
+    // v1.4 entries are blind: no label and no fingerprint (§6).
+    if !blind {
+        entry.insert("label".into(), Value::String(label));
+    }
     entry.insert("method".into(), Value::String(method.into()));
-    entry.insert("fingerprint".into(), Value::String(fingerprint));
+    if !blind {
+        entry.insert("fingerprint".into(), Value::String(fingerprint));
+    }
     // §6.4: on non-quorum cells the key is OMITTED, not written as null. The
     // choice is not cosmetic — canonicalization preserves an explicit null, so
     // the two forms hash differently. Both verify; they are not byte-identical.
@@ -155,9 +208,46 @@ pub struct CreateOptions {
     pub sender: Option<KeyRecord>,
     pub doc_id: Option<String>,
     pub created_at: Option<i64>,
+    /// Format version to write; `None` = [`CELL_FORMAT_VERSION`]. Any version
+    /// from 1.2 on may be asked for, e.g. `"1.3"` for recipients whose
+    /// software predates 1.4.
+    pub version: Option<String>,
 }
 
-/// Seal `data` into a v1.3 cell.
+/// Bytes the v1.4 inner sender signature covers (§4.5): content, manifest, the
+/// authenticated metadata (with the version), the cell's identity and the
+/// intended key recipients.
+#[allow(clippy::too_many_arguments)]
+pub fn sender_sig_input(
+    version: &str,
+    doc_id: &Value,
+    created_at: &Value,
+    aad: &[u8],
+    manifest: &Value,
+    content: &[u8],
+    sender_spki: &str,
+    to: &Value,
+) -> Result<Vec<u8>> {
+    let mut m = Map::new();
+    m.insert("purpose".into(), Value::String("cell-sender-signature".into()));
+    m.insert("version".into(), Value::String(version.into()));
+    m.insert("doc_id".into(), doc_id.clone());
+    m.insert("created_at".into(), created_at.clone());
+    m.insert(
+        "aad".into(),
+        Value::String(String::from_utf8_lossy(aad).into_owned()),
+    );
+    m.insert("manifest".into(), manifest.clone());
+    m.insert(
+        "content_sha256".into(),
+        Value::String(crypto::encode_b64(&crypto::sha256(content))),
+    );
+    m.insert("sender_spki".into(), Value::String(sender_spki.into()));
+    m.insert("to".into(), to.clone());
+    canonical_bytes(&Value::Object(m))
+}
+
+/// Seal `data` into a cell (v1.4 unless `opts.version` says otherwise).
 ///
 /// A threshold above 1 splits the CEK into one Shamir share per recipient, of
 /// which that many are needed (§7). `sender` adds a `header_sig`; note that its
@@ -172,7 +262,19 @@ pub fn create(
     if recipients.is_empty() {
         return Err(Error::Malformed("a cell needs at least one recipient".into()));
     }
+    let version: &str = opts.version.as_deref().unwrap_or(CELL_FORMAT_VERSION);
+    if !SUPPORTED_VERSIONS.contains(&version) || !CANONICAL_VERSIONS.contains(&version) {
+        return Err(Error::Malformed(format!(
+            "create writes v1.2 and later only, not {version:?}"
+        )));
+    }
+    let inner_sig = INNER_SIG_VERSIONS.contains(&version);
     let required = opts.threshold.clamp(1, recipients.len());
+    let doc_id = match &opts.doc_id {
+        Some(id) => id.clone(),
+        None => ulid(None, None)?,
+    };
+    let created_at = opts.created_at.unwrap_or_else(crate::keys::now);
     let content_type = opts
         .content_type
         .clone()
@@ -187,15 +289,6 @@ pub fn create(
     if let Some(meta) = &opts.meta {
         manifest.insert("meta".into(), meta.clone());
     }
-    let manifest_bytes = serde_json::to_vec(&Value::Object(manifest))
-        .map_err(|e| Error::Malformed(format!("encoding manifest: {e}")))?;
-
-    let mut plaintext = Vec::with_capacity(4 + manifest_bytes.len() + data.len());
-    plaintext.extend_from_slice(&(manifest_bytes.len() as u32).to_le_bytes());
-    plaintext.extend_from_slice(&manifest_bytes);
-    plaintext.extend_from_slice(data);
-    let body = crypto::gzip_compress(&plaintext)?;
-
     let cek = crypto::random_bytes(crypto::CEK_LENGTH);
 
     // Metadata is fixed before encryption precisely so it can be bound as AAD.
@@ -228,7 +321,58 @@ pub fn create(
     );
 
     let header_value = Value::Object(header.clone());
-    let aad = cell_aad(&header_value, CELL_FORMAT_VERSION)?;
+    let aad = cell_aad(&header_value, version)?;
+
+    // v1.4: the signature is made before encryption and carried inside the
+    // manifest, so only someone who can open the cell learns who signed it.
+    if inner_sig {
+        if let Some(sender) = &opts.sender {
+            let private = sender.private.as_ref().ok_or_else(|| {
+                Error::Malformed("signing requires a key record with a private key".into())
+            })?;
+            let mut to: Vec<String> = Vec::new();
+            for r in recipients {
+                if let Recipient::Ecdh { spki, .. } = r {
+                    to.push(crypto::fingerprint(&crypto::decode_b64(spki, "spki")?));
+                }
+            }
+            to.sort();
+            let to_value = json!(to);
+            let sender_spki = sender.spki()?;
+            let input = sender_sig_input(
+                version,
+                &Value::String(doc_id.clone()),
+                &json!(created_at),
+                aad.as_deref().unwrap_or(&[]),
+                &Value::Object(manifest.clone()),
+                data,
+                &sender_spki,
+                &to_value,
+            )?;
+            manifest.insert(
+                "sender".into(),
+                json!({
+                    "spki": sender_spki,
+                    "to": to_value,
+                    "sig": crypto::encode_b64(&crypto::ecdsa_sign(private, &input)),
+                }),
+            );
+        }
+    }
+
+    let manifest_bytes = serde_json::to_vec(&Value::Object(manifest))
+        .map_err(|e| Error::Malformed(format!("encoding manifest: {e}")))?;
+
+    let mut plaintext = Vec::with_capacity(4 + manifest_bytes.len() + data.len());
+    plaintext.extend_from_slice(&(manifest_bytes.len() as u32).to_le_bytes());
+    plaintext.extend_from_slice(&manifest_bytes);
+    plaintext.extend_from_slice(data);
+    let gz = crypto::gzip_compress(&plaintext)?;
+    let body = if PADDED_VERSIONS.contains(&version) {
+        crypto::pad_body(&gz)?
+    } else {
+        gz
+    };
     let (iv, ciphertext) = crypto::aes_gcm_encrypt(&cek, &body, aad.as_deref(), None)?;
 
     let access_map: Vec<Value> = if required > 1 {
@@ -236,12 +380,12 @@ pub fn create(
         recipients
             .iter()
             .enumerate()
-            .map(|(i, r)| wrap_entry(r, &shares[i].data, Some(i + 1)))
+            .map(|(i, r)| wrap_entry(r, &shares[i].data, Some(i + 1), version))
             .collect::<Result<Vec<_>>>()?
     } else {
         recipients
             .iter()
-            .map(|r| wrap_entry(r, &cek, None))
+            .map(|r| wrap_entry(r, &cek, None, version))
             .collect::<Result<Vec<_>>>()?
     };
 
@@ -252,46 +396,41 @@ pub fn create(
     );
     let header_value = Value::Object(header);
 
-    let header_bytes = serialize_header(&header_value, CELL_FORMAT_VERSION)?;
-    let doc_id = match &opts.doc_id {
-        Some(id) => id.clone(),
-        None => ulid(None, None)?,
-    };
+    let header_bytes = serialize_header(&header_value, version)?;
 
     let mut cell = Map::new();
-    cell.insert("version".into(), Value::String(CELL_FORMAT_VERSION.into()));
+    cell.insert("version".into(), Value::String(version.into()));
     cell.insert("doc_id".into(), Value::String(doc_id));
-    cell.insert(
-        "created_at".into(),
-        json!(opts.created_at.unwrap_or_else(crate::keys::now)),
-    );
+    cell.insert("created_at".into(), json!(created_at));
     cell.insert("header".into(), header_value);
     cell.insert(
         "header_hash".into(),
         Value::String(crypto::encode_b64(&crypto::sha256(&header_bytes))),
     );
 
-    let (sig, sig_by, sig_key) = match &opts.sender {
-        Some(sender) => {
-            let private = sender.private.as_ref().ok_or_else(|| {
-                Error::Malformed("signing requires a key record with a private key".into())
-            })?;
-            (
-                Value::String(crypto::encode_b64(&crypto::ecdsa_sign(private, &header_bytes))),
-                Value::String(sender.fingerprint()?),
-                Value::String(sender.spki()?),
-            )
-        }
-        None => (Value::Null, Value::Null, Value::Null),
-    };
-    cell.insert("header_sig".into(), sig);
-    cell.insert("header_sig_by".into(), sig_by);
-    cell.insert("header_sig_key".into(), sig_key);
+    if !inner_sig {
+        let (sig, sig_by, sig_key) = match &opts.sender {
+            Some(sender) => {
+                let private = sender.private.as_ref().ok_or_else(|| {
+                    Error::Malformed("signing requires a key record with a private key".into())
+                })?;
+                (
+                    Value::String(crypto::encode_b64(&crypto::ecdsa_sign(private, &header_bytes))),
+                    Value::String(sender.fingerprint()?),
+                    Value::String(sender.spki()?),
+                )
+            }
+            None => (Value::Null, Value::Null, Value::Null),
+        };
+        cell.insert("header_sig".into(), sig);
+        cell.insert("header_sig_by".into(), sig_by);
+        cell.insert("header_sig_key".into(), sig_key);
+    }
     cell.insert(
         "payload".into(),
         json!({
             "alg": "AES-256-GCM",
-            "encoding": "base64+gzip",
+            "encoding": if PADDED_VERSIONS.contains(&version) { "base64+gzip+padme" } else { "base64+gzip" },
             "iv": crypto::encode_b64(&iv),
             "ciphertext": crypto::encode_b64(&ciphertext),
         }),
@@ -337,6 +476,30 @@ pub fn verify(cell: &Value, expected_signer: Option<&str>) -> Result<VerifyResul
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .ok_or_else(|| Error::Integrity("header_hash is missing".into()))?;
+
+    if INNER_SIG_VERSIONS.contains(&version.as_str()) {
+        let present = |k: &str| match cell.get(k) {
+            None | Some(Value::Null) => false,
+            Some(Value::String(s)) => !s.is_empty(),
+            Some(_) => true,
+        };
+        if present("header_sig") || present("header_sig_key") || present("header_sig_by") {
+            return Err(Error::Malformed(format!(
+                "a v{version} cell carries its signature inside the payload — \
+                 a header signature here is malformed"
+            )));
+        }
+    }
+    if header
+        .get("access_map")
+        .and_then(|v| v.as_array())
+        .map_or(0, |a| a.len())
+        > MAX_ACCESS_ENTRIES
+    {
+        return Err(Error::Malformed(format!(
+            "too many access-map entries (> {MAX_ACCESS_ENTRIES})"
+        )));
+    }
 
     let header_bytes = serialize_header(header, &version)?;
     if crypto::encode_b64(&crypto::sha256(&header_bytes)) != header_hash {
@@ -386,7 +549,8 @@ pub fn verify(cell: &Value, expected_signer: Option<&str>) -> Result<VerifyResul
         result.signer_fingerprint = Some(crypto::fingerprint(&spki_der));
     }
 
-    if let Some(expected) = expected_signer {
+    // v1.4 signatures are inside the payload; `open` checks `expected_signer`.
+    if let (Some(expected), false) = (expected_signer, INNER_SIG_VERSIONS.contains(&result.version.as_str())) {
         if !result.signed {
             return Err(Error::Signature(format!(
                 "expected a cell signed by {expected}, but it carries no signature \
@@ -417,6 +581,8 @@ pub struct OpenResult {
     pub signer_fingerprint: Option<String>,
     pub claimed_signer: Option<String>,
     pub lifetime: Option<Lifetime>,
+    /// v1.4: fingerprints of the key recipients the signer addressed (§4.5).
+    pub signed_to: Option<Vec<String>>,
 }
 
 /// Key material and policy for [`open`]. `Default` enforces the advisory gates
@@ -572,6 +738,11 @@ pub fn open(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
         &crypto::decode_b64(ct_b64, "ciphertext")?,
         aad.as_deref(),
     )?;
+    let compressed = if PADDED_VERSIONS.contains(&version.as_str()) {
+        crypto::unpad_body(&compressed)?.to_vec()
+    } else {
+        compressed
+    };
     let plain = crypto::gzip_decompress(&compressed)?;
 
     let (signed, signer_fingerprint, claimed_signer) = match &verified {
@@ -599,6 +770,7 @@ pub fn open(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
             signer_fingerprint,
             claimed_signer,
             lifetime: lt,
+            signed_to: None,
         });
     }
 
@@ -615,9 +787,65 @@ pub fn open(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
     }
     let manifest: Value = serde_json::from_slice(&plain[4..4 + manifest_len])
         .map_err(|e| Error::Malformed(format!("manifest is not valid JSON: {e}")))?;
+    let data = plain[4 + manifest_len..].to_vec();
+
+    // v1.4: the sender signature is inside the manifest, so it can only be
+    // checked now (§10 step 5).
+    let mut signed = signed;
+    let mut signer_fingerprint = signer_fingerprint;
+    let mut signed_to = None;
+    if INNER_SIG_VERSIONS.contains(&version.as_str()) {
+        match manifest.get("sender") {
+            Some(sender) => {
+                let bad = || Error::Malformed("malformed sender signature".into());
+                let spki = sender.get("spki").and_then(|v| v.as_str()).ok_or_else(bad)?;
+                let sig = sender.get("sig").and_then(|v| v.as_str()).ok_or_else(bad)?;
+                let to = sender.get("to").filter(|v| v.is_array()).ok_or_else(bad)?;
+                let mut unsigned = manifest.clone();
+                if let Some(obj) = unsigned.as_object_mut() {
+                    obj.remove("sender");
+                }
+                let spki_der = crypto::decode_b64(spki, "sender.spki")?;
+                let input = sender_sig_input(
+                    &version,
+                    cell.get("doc_id").unwrap_or(&Value::Null),
+                    cell.get("created_at").unwrap_or(&Value::Null),
+                    aad.as_deref().unwrap_or(&[]),
+                    &unsigned,
+                    &data,
+                    spki,
+                    to,
+                )?;
+                let public = crypto::parse_spki(&spki_der)?;
+                crypto::ecdsa_verify(&public, &crypto::decode_b64(sig, "sender.sig")?, &input)?;
+                let fp = crypto::fingerprint(&spki_der);
+                if let Some(expected) = opts.expected_signer.as_deref() {
+                    if fp != expected {
+                        return Err(Error::Signature(format!(
+                            "cell is signed by {fp}, not the expected {expected}"
+                        )));
+                    }
+                }
+                signed = true;
+                signer_fingerprint = Some(fp);
+                signed_to = Some(
+                    to.as_array()
+                        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                        .unwrap_or_default(),
+                );
+            }
+            None => {
+                if let Some(expected) = opts.expected_signer.as_deref() {
+                    return Err(Error::Signature(format!(
+                        "expected a cell signed by {expected}, but it carries no signature"
+                    )));
+                }
+            }
+        }
+    }
 
     Ok(OpenResult {
-        data: plain[4 + manifest_len..].to_vec(),
+        data,
         filename: manifest
             .get("filename")
             .and_then(|v| v.as_str())
@@ -636,6 +864,7 @@ pub fn open(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
         signer_fingerprint,
         claimed_signer,
         lifetime: lt,
+        signed_to,
     })
 }
 
@@ -685,6 +914,14 @@ fn try_unwrap(entry: &Value, opts: &OpenOptions) -> Option<Vec<u8>> {
                 .unwrap_or(crypto::PBKDF2_ITERATIONS as u64) as u32;
             for passphrase in &opts.passphrases {
                 if let Ok(material) = crypto::pbkdf2_unwrap_cek(salt, iterations, ct, passphrase) {
+                    return Some(material);
+                }
+            }
+            None
+        }
+        "argon2id" => {
+            for passphrase in &opts.passphrases {
+                if let Ok(material) = crypto::argon2id_unwrap_cek(wrapped, passphrase) {
                     return Some(material);
                 }
             }

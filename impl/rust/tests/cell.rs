@@ -138,7 +138,7 @@ fn integrity_refusals() {
     let mut cell = seal(
         b"x",
         &[Recipient::for_key(&alice).unwrap()],
-        CreateOptions { sender: Some(alice.clone()), ..Default::default() },
+        CreateOptions { sender: Some(alice.clone()), version: Some("1.3".into()), ..Default::default() },
     );
     let other = seal(b"x", &[Recipient::for_key(&bob).unwrap()], CreateOptions::default());
     cell["header"]["access_map"] = other["header"]["access_map"].clone();
@@ -155,7 +155,7 @@ fn signatures() {
         seal(
             b"x",
             &[Recipient::for_key(&alice).unwrap()],
-            CreateOptions { sender: Some(bob.clone()), ..Default::default() },
+            CreateOptions { sender: Some(bob.clone()), version: Some("1.3".into()), ..Default::default() },
         )
     };
 
@@ -306,7 +306,7 @@ fn encoding_rules() {
     let cell = seal(
         &(0..512).map(|i| i as u8).collect::<Vec<u8>>(),
         &[Recipient::for_key(&alice).unwrap()],
-        CreateOptions { sender: Some(alice.clone()), ..Default::default() },
+        CreateOptions { sender: Some(alice.clone()), version: Some("1.3".into()), ..Default::default() },
     );
     for field in [&cell["payload"]["ciphertext"], &cell["payload"]["iv"], &cell["header_hash"], &cell["header_sig"]] {
         let s = field.as_str().unwrap();
@@ -319,4 +319,115 @@ fn encoding_rules() {
     );
     // Sanity: the cell canonicalizes without error, which the hash relies on.
     assert!(canonicalize(&cell["header"]).is_ok());
+}
+
+// ─── v1.4 ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn v14_entries_are_blind_and_found_by_trial() {
+    let alice = KeyRecord::generate("Alice");
+    let bob = KeyRecord::generate("Bob");
+    let carol = KeyRecord::generate("Carol");
+    let cell = seal(
+        b"for two of three",
+        &[Recipient::for_key(&alice).unwrap(), Recipient::for_key(&bob).unwrap()],
+        CreateOptions::default(),
+    );
+    assert_eq!(cell["version"], json!("1.4"));
+    for entry in cell["header"]["access_map"].as_array().unwrap() {
+        assert!(entry.get("fingerprint").is_none() && entry.get("label").is_none());
+    }
+    // The last entry is bob's: trial decryption must still find it.
+    assert_eq!(open(&cell, &keys_for(&[&bob])).unwrap().data, b"for two of three");
+    assert!(matches!(open(&cell, &keys_for(&[&carol])), Err(Error::NoMatchingKey)));
+}
+
+#[test]
+fn v14_signature_is_inside_the_payload() {
+    let alice = KeyRecord::generate("Alice");
+    let bob = KeyRecord::generate("Bob");
+    let cell = seal(
+        b"signed",
+        &[Recipient::for_key(&alice).unwrap()],
+        CreateOptions { sender: Some(bob.clone()), ..Default::default() },
+    );
+    assert!(cell.get("header_sig").is_none() && cell.get("header_sig_key").is_none());
+    assert!(!cell.to_string().contains(&bob.spki().unwrap()));
+    let r = open(&cell, &keys_for(&[&alice])).unwrap();
+    assert!(r.signed);
+    assert_eq!(r.signer_fingerprint, Some(bob.fingerprint().unwrap()));
+    assert_eq!(r.signed_to, Some(vec![alice.fingerprint().unwrap()]));
+
+    // A header signature on a v1.4 cell is malformed, not "verify it anyway".
+    let mut bad = cell.clone();
+    bad["header_sig"] = json!("AAAA");
+    assert!(matches!(open(&bad, &keys_for(&[&alice])), Err(Error::Malformed(_))));
+
+    // created_at sits outside the AAD but inside the signed input.
+    let mut bad = cell.clone();
+    bad["created_at"] = json!(1);
+    assert!(matches!(open(&bad, &keys_for(&[&alice])), Err(Error::Signature(_))));
+
+    // expected_signer is checked against the recomputed fingerprint.
+    let mut opts = keys_for(&[&alice]);
+    opts.expected_signer = Some(alice.fingerprint().unwrap());
+    assert!(matches!(open(&cell, &opts), Err(Error::Signature(_))));
+}
+
+#[test]
+fn v14_version_is_authenticated_and_body_is_padded() {
+    let alice = KeyRecord::generate("Alice");
+    let opts = keys_for(&[&alice]);
+    let cell = seal(b"x", &[Recipient::for_key(&alice).unwrap()], CreateOptions::default());
+    let mut relabelled = cell.clone();
+    relabelled["version"] = json!("1.3");
+    rehash(&mut relabelled);
+    assert!(matches!(open(&relabelled, &opts), Err(Error::Decryption)), "relabelled");
+
+    // Small bodies all share the 512-byte floor (+16 GCM tag).
+    for n in [1usize, 10, 100] {
+        let c = seal(&vec![7u8; n], &[Recipient::for_key(&alice).unwrap()], CreateOptions::default());
+        let ct = crypto::decode_b64(c["payload"]["ciphertext"].as_str().unwrap(), "ct").unwrap();
+        assert_eq!(ct.len(), 512 + 16);
+    }
+    assert_eq!(crypto::padme_length(512), 512);
+    assert_eq!(crypto::padme_length(513), 544);
+    assert_eq!(crypto::padme_length(100_000), 100_352);
+}
+
+#[test]
+fn v14_argon2id_entry_and_bounds() {
+    let cell = seal(
+        b"secret",
+        &[Recipient::argon2id("correct horse", "")],
+        CreateOptions::default(),
+    );
+    let mut ok = OpenOptions::default();
+    ok.passphrases.push("correct horse".into());
+    assert_eq!(open(&cell, &ok).unwrap().data, b"secret");
+    let mut wrong = OpenOptions::default();
+    wrong.passphrases.push("battery staple".into());
+    assert!(matches!(open(&cell, &wrong), Err(Error::NoMatchingKey)));
+
+    // Parameter floor / ceiling are refused, not attempted.
+    assert!(crypto::argon2_check(8, 1, 1).is_err());
+    assert!(crypto::argon2_check(19_456, 1, 1).is_err()); // one pass needs 46 MiB
+    assert!(crypto::argon2_check(2_000_000, 3, 4).is_err());
+    assert!(crypto::argon2_check(65_536, 3, 4).is_ok());
+
+    // NFC: composed and decomposed accents are one passphrase (v1.4).
+    let cell = seal(b"n", &[Recipient::argon2id("caf\u{e9}", "")], CreateOptions::default());
+    let mut opts = OpenOptions::default();
+    opts.passphrases.push("cafe\u{301}".into());
+    assert_eq!(open(&cell, &opts).unwrap().data, b"n");
+}
+
+#[test]
+fn v14_access_map_limit() {
+    let alice = KeyRecord::generate("Alice");
+    let mut cell = seal(b"x", &[Recipient::for_key(&alice).unwrap()], CreateOptions::default());
+    let entry = cell["header"]["access_map"][0].clone();
+    cell["header"]["access_map"] = json!(vec![entry; 257]);
+    rehash(&mut cell);
+    assert!(matches!(open(&cell, &keys_for(&[&alice])), Err(Error::Malformed(_))));
 }
