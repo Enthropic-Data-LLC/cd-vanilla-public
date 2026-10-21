@@ -27,7 +27,7 @@ them has been compiled and run verbatim.
 - **Python** — the widest audience for evaluation and scripting: compliance,
   forensics, data pipelines. One dependency, stdlib-only tests.
 - **Go** — a single static binary that cross-compiles anywhere, which is what
-  you hand an auditor who has no toolchain. Zero dependencies.
+  you hand an auditor who has no toolchain. Two pinned `golang.org/x` modules since v1.4 (Argon2id, NFC).
 - **Rust** — the route to a second *browser* implementation via WASM, and an FFI
   core other languages can bind rather than each re-porting Shamir.
 - **Java** — enterprise and Android integration. No runtime dependencies.

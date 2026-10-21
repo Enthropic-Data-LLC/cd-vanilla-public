@@ -9,23 +9,33 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 )
 
 // Sealing and opening .cell documents — spec §4, §5, §10, §12.
 
 // CellFormatVersion is the version this package writes.
-const CellFormatVersion = "1.3"
+const CellFormatVersion = "1.4"
 
 // SupportedVersions, CanonicalVersions and AADVersions are held as sets on
 // purpose. §12 warns that adding a version to the supported set while leaving an
 // inline `version == "1.2"` test elsewhere silently drops canonicalization, or
 // decrypts new cells with no AAD, with no error raised at any point.
 var (
-	SupportedVersions = map[string]bool{"1.0": true, "1.1": true, "1.2": true, "1.3": true}
-	CanonicalVersions = map[string]bool{"1.2": true, "1.3": true}
-	AADVersions       = map[string]bool{"1.1": true, "1.2": true, "1.3": true}
+	SupportedVersions = map[string]bool{"1.0": true, "1.1": true, "1.2": true, "1.3": true, "1.4": true}
+	CanonicalVersions = map[string]bool{"1.2": true, "1.3": true, "1.4": true}
+	AADVersions       = map[string]bool{"1.1": true, "1.2": true, "1.3": true, "1.4": true}
+
+	// v1.4 features, each gated by its own set (same reasoning as above).
+	VersionedAADVersions = map[string]bool{"1.4": true}
+	PaddedVersions       = map[string]bool{"1.4": true}
+	InnerSigVersions     = map[string]bool{"1.4": true}
+	BlindEntryVersions   = map[string]bool{"1.4": true}
 )
+
+// MaxAccessEntries: openers refuse a larger access map before trying any key (§6).
+const MaxAccessEntries = 256
 
 // SerializeHeader returns the bytes header_hash and header_sig cover (§4.1.1).
 //
@@ -57,6 +67,16 @@ func CellAAD(header *Object, version string) ([]byte, error) {
 		v, _ := header.Get(key)
 		return v
 	}
+	if VersionedAADVersions[version] {
+		// v1.4: an object that includes the version, so relabelling fails the tag.
+		o := NewObject()
+		o.Set("format", version)
+		o.Set("prev_hash", get("prev_hash"))
+		o.Set("threshold", get("threshold"))
+		o.Set("lifetime", get("lifetime"))
+		o.Set("policy", get("policy"))
+		return CanonicalBytes(o)
+	}
 	meta := []Value{get("prev_hash"), get("threshold"), get("lifetime"), get("policy")}
 	if version == "1.1" {
 		s, err := jsStringify(meta)
@@ -76,6 +96,16 @@ type Recipient struct {
 	Label      string
 	SPKI       string
 	Passphrase string
+	// Argon2 is (m KiB, t, p) for an argon2id recipient; nil means the defaults.
+	Argon2 *[3]int
+}
+
+// Argon2idRecipient wraps under a passphrase with Argon2id (v1.4 only).
+func Argon2idRecipient(passphrase, label string) Recipient {
+	if label == "" {
+		label = "Passphrase"
+	}
+	return Recipient{Method: "argon2id", Label: label, Passphrase: passphrase}
 }
 
 // ECDHRecipient wraps for the holder of a P-256 public key (base64 SPKI).
@@ -96,9 +126,12 @@ func PassphraseRecipient(passphrase, label string) Recipient {
 	return Recipient{Method: "pbkdf2", Label: label, Passphrase: passphrase}
 }
 
-func wrapEntry(r Recipient, keyMaterial []byte, shareIndex int) (*Object, error) {
+func wrapEntry(r Recipient, keyMaterial []byte, shareIndex int, version string) (*Object, error) {
+	blind := BlindEntryVersions[version]
 	entry := NewObject()
-	entry.Set("label", r.Label)
+	if !blind {
+		entry.Set("label", r.Label)
+	}
 	entry.Set("method", r.Method)
 
 	var wrapped *Object
@@ -111,7 +144,9 @@ func wrapEntry(r Recipient, keyMaterial []byte, shareIndex int) (*Object, error)
 		if err != nil {
 			return nil, err
 		}
-		entry.Set("fingerprint", Fingerprint(der))
+		if !blind {
+			entry.Set("fingerprint", Fingerprint(der))
+		}
 		if wrapped, err = ECDHWrapCEK(keyMaterial, r.SPKI, nil, nil); err != nil {
 			return nil, err
 		}
@@ -127,7 +162,17 @@ func wrapEntry(r Recipient, keyMaterial []byte, shareIndex int) (*Object, error)
 		if err != nil {
 			return nil, err
 		}
-		entry.Set("fingerprint", Fingerprint(salt))
+		if !blind {
+			entry.Set("fingerprint", Fingerprint(salt))
+		}
+	case "argon2id":
+		if !blind {
+			return nil, fmt.Errorf("%w: argon2id entries need format v1.4", ErrMalformed)
+		}
+		var err error
+		if wrapped, err = Argon2idWrapCEK(keyMaterial, r.Passphrase, r.Argon2, nil); err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("%w: unknown access method %q", ErrMalformed, r.Method)
 	}
@@ -156,18 +201,47 @@ type CreateOptions struct {
 	Sender      *KeyRecord
 	DocID       string
 	CreatedAt   int64
+	// Version to write; empty means CellFormatVersion. Any version from 1.2 on
+	// may be asked for, e.g. "1.3" for recipients whose software predates 1.4.
+	Version string
 }
 
-// Create seals data into a v1.3 cell.
+// SenderSigInput is the bytes the v1.4 inner sender signature covers (§4.5):
+// content, manifest, the authenticated metadata (with the version), the cell's
+// identity and the intended key recipients.
+func SenderSigInput(version string, docID, createdAt Value, aad []byte, manifest *Object,
+	content []byte, senderSPKI string, to []Value) ([]byte, error) {
+	o := NewObject()
+	o.Set("purpose", "cell-sender-signature")
+	o.Set("version", version)
+	o.Set("doc_id", docID)
+	o.Set("created_at", createdAt)
+	o.Set("aad", string(aad))
+	o.Set("manifest", manifest)
+	o.Set("content_sha256", EncodeB64(sha256Sum(content)))
+	o.Set("sender_spki", senderSPKI)
+	o.Set("to", to)
+	return CanonicalBytes(o)
+}
+
+// Create seals data into a cell (v1.4 unless opts.Version says otherwise).
 //
 // Threshold > 1 splits the CEK into one Shamir share per recipient, of which
-// that many are needed (§7). Sender adds a header_sig; note that its ABSENCE is
-// undetectable to a reader (§4.1), so a signature proves authorship while no
-// signature proves nothing at all.
+// that many are needed (§7). Sender adds a signature; its ABSENCE is
+// undetectable to a reader, so a signature proves authorship while no signature
+// proves nothing at all.
 func Create(data []byte, filename string, recipients []Recipient, opts CreateOptions) (*Object, error) {
 	if len(recipients) == 0 {
 		return nil, fmt.Errorf("%w: a cell needs at least one recipient", ErrMalformed)
 	}
+	version := opts.Version
+	if version == "" {
+		version = CellFormatVersion
+	}
+	if !SupportedVersions[version] || !CanonicalVersions[version] {
+		return nil, fmt.Errorf("%w: Create writes v1.2 and later only, not %q", ErrMalformed, version)
+	}
+	innerSig := InnerSigVersions[version]
 	required := opts.Threshold
 	if required < 1 {
 		required = 1
@@ -178,6 +252,17 @@ func Create(data []byte, filename string, recipients []Recipient, opts CreateOpt
 	contentType := opts.ContentType
 	if contentType == "" {
 		contentType = "application/octet-stream"
+	}
+	docID := opts.DocID
+	if docID == "" {
+		var err error
+		if docID, err = ULID(0, nil); err != nil {
+			return nil, err
+		}
+	}
+	createdAt := opts.CreatedAt
+	if createdAt == 0 {
+		createdAt = time.Now().Unix()
 	}
 
 	// Manifest-prefixed plaintext (§5): filename, type and size live inside the
@@ -193,16 +278,6 @@ func Create(data []byte, filename string, recipients []Recipient, opts CreateOpt
 		return nil, err
 	}
 	manifestBytes := bytes.TrimRight(manifestBuf.Bytes(), "\n")
-
-	plaintext := make([]byte, 4+len(manifestBytes)+len(data))
-	binary.LittleEndian.PutUint32(plaintext[:4], uint32(len(manifestBytes)))
-	copy(plaintext[4:], manifestBytes)
-	copy(plaintext[4+len(manifestBytes):], data)
-
-	body, err := GzipCompress(plaintext)
-	if err != nil {
-		return nil, err
-	}
 
 	cek := make([]byte, CEKLength)
 	if _, err := rand.Read(cek); err != nil {
@@ -238,9 +313,71 @@ func Create(data []byte, filename string, recipients []Recipient, opts CreateOpt
 	header.Set("lifetime", lifetime)
 	header.Set("policy", policy)
 
-	aad, err := CellAAD(header, CellFormatVersion)
+	aad, err := CellAAD(header, version)
 	if err != nil {
 		return nil, err
+	}
+
+	// v1.4: the signature is made before encryption and carried inside the
+	// manifest, so only someone who can open the cell learns who signed it.
+	if innerSig && opts.Sender != nil {
+		if opts.Sender.Private == nil {
+			return nil, fmt.Errorf("%w: signing requires a key record with a private key", ErrMalformed)
+		}
+		var to []string
+		for _, r := range recipients {
+			if r.Method == "ecdh-p256" && r.SPKI != "" {
+				der, err := DecodeB64(r.SPKI, "spki")
+				if err != nil {
+					return nil, err
+				}
+				to = append(to, Fingerprint(der))
+			}
+		}
+		sort.Strings(to)
+		toValues := make([]Value, len(to))
+		for i, f := range to {
+			toValues[i] = f
+		}
+		parsed, err := ParseValue(manifestBytes)
+		if err != nil {
+			return nil, err
+		}
+		manifestObj := parsed.(*Object)
+		input, err := SenderSigInput(version, docID, float64(createdAt), aad, manifestObj, data,
+			opts.Sender.SPKI(), toValues)
+		if err != nil {
+			return nil, err
+		}
+		sig, err := ECDSASign(opts.Sender.Private, input)
+		if err != nil {
+			return nil, err
+		}
+		senderObj := NewObject()
+		senderObj.Set("spki", opts.Sender.SPKI())
+		senderObj.Set("to", toValues)
+		senderObj.Set("sig", EncodeB64(sig))
+		manifestObj.Set("sender", senderObj)
+		s, err := jsStringify(manifestObj)
+		if err != nil {
+			return nil, err
+		}
+		manifestBytes = []byte(s)
+	}
+
+	plaintext := make([]byte, 4+len(manifestBytes)+len(data))
+	binary.LittleEndian.PutUint32(plaintext[:4], uint32(len(manifestBytes)))
+	copy(plaintext[4:], manifestBytes)
+	copy(plaintext[4+len(manifestBytes):], data)
+
+	body, err := GzipCompress(plaintext)
+	if err != nil {
+		return nil, err
+	}
+	if PaddedVersions[version] {
+		if body, err = PadBody(body); err != nil {
+			return nil, err
+		}
 	}
 	iv, ciphertext, err := AESGCMEncrypt(cek, body, aad, nil)
 	if err != nil {
@@ -254,7 +391,7 @@ func Create(data []byte, filename string, recipients []Recipient, opts CreateOpt
 			return nil, err
 		}
 		for i, r := range recipients {
-			entry, err := wrapEntry(r, shares[i].Data, i+1)
+			entry, err := wrapEntry(r, shares[i].Data, i+1, version)
 			if err != nil {
 				return nil, err
 			}
@@ -262,7 +399,7 @@ func Create(data []byte, filename string, recipients []Recipient, opts CreateOpt
 		}
 	} else {
 		for _, r := range recipients {
-			entry, err := wrapEntry(r, cek, 0)
+			entry, err := wrapEntry(r, cek, 0, version)
 			if err != nil {
 				return nil, err
 			}
@@ -273,40 +410,35 @@ func Create(data []byte, filename string, recipients []Recipient, opts CreateOpt
 	header.Set("access_map", accessMap)
 	header.Set("payload_hash", EncodeB64(sha256Sum(ciphertext)))
 
-	headerBytes, err := SerializeHeader(header, CellFormatVersion)
+	headerBytes, err := SerializeHeader(header, version)
 	if err != nil {
 		return nil, err
 	}
 
-	docID := opts.DocID
-	if docID == "" {
-		if docID, err = ULID(0, nil); err != nil {
-			return nil, err
-		}
+	encoding := "base64+gzip"
+	if PaddedVersions[version] {
+		encoding = "base64+gzip+padme"
 	}
-	createdAt := opts.CreatedAt
-	if createdAt == 0 {
-		createdAt = time.Now().Unix()
-	}
-
 	payload := NewObject()
 	payload.Set("alg", "AES-256-GCM")
-	payload.Set("encoding", "base64+gzip")
+	payload.Set("encoding", encoding)
 	payload.Set("iv", EncodeB64(iv))
 	payload.Set("ciphertext", EncodeB64(ciphertext))
 
 	out := NewObject()
-	out.Set("version", CellFormatVersion)
+	out.Set("version", version)
 	out.Set("doc_id", docID)
 	out.Set("created_at", float64(createdAt))
 	out.Set("header", header)
 	out.Set("header_hash", EncodeB64(sha256Sum(headerBytes)))
-	out.Set("header_sig", nil)
-	out.Set("header_sig_by", nil)
-	out.Set("header_sig_key", nil)
+	if !innerSig {
+		out.Set("header_sig", nil)
+		out.Set("header_sig_by", nil)
+		out.Set("header_sig_key", nil)
+	}
 	out.Set("payload", payload)
 
-	if opts.Sender != nil {
+	if opts.Sender != nil && !innerSig {
 		if opts.Sender.Private == nil {
 			return nil, fmt.Errorf("%w: signing requires a key record with a private key", ErrMalformed)
 		}
@@ -357,6 +489,15 @@ func Verify(c *Object, expectedSigner string) (*VerifyResult, error) {
 	headerHash := c.GetString("header_hash")
 	if headerHash == "" {
 		return nil, fmt.Errorf("%w: header_hash is missing", ErrIntegrity)
+	}
+	if InnerSigVersions[version] {
+		if c.GetString("header_sig") != "" || c.GetString("header_sig_key") != "" || c.GetString("header_sig_by") != "" {
+			return nil, fmt.Errorf("%w: a v%s cell carries its signature inside the payload — a header signature here is malformed",
+				ErrMalformed, version)
+		}
+	}
+	if len(header.GetArray("access_map")) > MaxAccessEntries {
+		return nil, fmt.Errorf("%w: too many access-map entries (> %d)", ErrMalformed, MaxAccessEntries)
 	}
 	headerBytes, err := SerializeHeader(header, version)
 	if err != nil {
@@ -415,7 +556,8 @@ func Verify(c *Object, expectedSigner string) (*VerifyResult, error) {
 		result.SignerFingerprint = Fingerprint(spkiDER)
 	}
 
-	if expectedSigner != "" {
+	// v1.4 signatures are inside the payload; Open checks ExpectedSigner there.
+	if expectedSigner != "" && !InnerSigVersions[version] {
 		if !result.Signed {
 			return nil, fmt.Errorf("%w: expected a cell signed by %s, but it carries no signature "+
 				"(removal is undetectable — see spec §4.1)", ErrSignature, expectedSigner)
@@ -441,6 +583,7 @@ type OpenResult struct {
 	SignerFingerprint string
 	ClaimedSigner     string
 	Lifetime          *Lifetime
+	SignedTo          []string // v1.4: fingerprints of the key recipients the signer addressed (§4.5)
 }
 
 // OpenOptions supplies key material and policy for Open. The zero value
@@ -597,6 +740,11 @@ func Open(c *Object, opts OpenOptions) (*OpenResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if PaddedVersions[version] {
+		if compressed, err = UnpadBody(compressed); err != nil {
+			return nil, err
+		}
+	}
 	plain, err := GzipDecompress(compressed)
 	if err != nil {
 		return nil, err
@@ -637,6 +785,60 @@ func Open(c *Object, opts OpenOptions) (*OpenResult, error) {
 		result.Meta = meta
 	}
 	result.Data = plain[4+manifestLen:]
+
+	// v1.4: the sender signature is inside the manifest, so it can only be
+	// checked now (§10 step 5).
+	if InnerSigVersions[version] {
+		if senderValue, ok := manifest.Get("sender"); ok {
+			sender, isObj := senderValue.(*Object)
+			if !isObj || sender.GetString("spki") == "" || sender.GetString("sig") == "" || sender.GetArray("to") == nil {
+				return nil, fmt.Errorf("%w: malformed sender signature", ErrMalformed)
+			}
+			unsigned := NewObject()
+			for _, k := range manifest.Keys() {
+				if k != "sender" {
+					v, _ := manifest.Get(k)
+					unsigned.Set(k, v)
+				}
+			}
+			docID, _ := c.Get("doc_id")
+			createdAt, _ := c.Get("created_at")
+			input, err := SenderSigInput(version, docID, createdAt, aad, unsigned, result.Data,
+				sender.GetString("spki"), sender.GetArray("to"))
+			if err != nil {
+				return nil, err
+			}
+			spkiDER, err := DecodeB64(sender.GetString("spki"), "sender.spki")
+			if err != nil {
+				return nil, err
+			}
+			public, err := ParseSPKIForECDSA(spkiDER)
+			if err != nil {
+				return nil, err
+			}
+			rawSig, err := DecodeB64(sender.GetString("sig"), "sender.sig")
+			if err != nil {
+				return nil, err
+			}
+			if err := ECDSAVerify(public, rawSig, input); err != nil {
+				return nil, err
+			}
+			fp := Fingerprint(spkiDER)
+			if opts.ExpectedSigner != "" && fp != opts.ExpectedSigner {
+				return nil, fmt.Errorf("%w: cell is signed by %s, not the expected %s", ErrSignature, fp, opts.ExpectedSigner)
+			}
+			result.Signed = true
+			result.SignerFingerprint = fp
+			result.ClaimedSigner = ""
+			for _, v := range sender.GetArray("to") {
+				if str, ok := v.(string); ok {
+					result.SignedTo = append(result.SignedTo, str)
+				}
+			}
+		} else if opts.ExpectedSigner != "" {
+			return nil, fmt.Errorf("%w: expected a cell signed by %s, but it carries no signature", ErrSignature, opts.ExpectedSigner)
+		}
+	}
 	return result, nil
 }
 
@@ -677,6 +879,12 @@ func tryUnwrap(entry *Object, opts OpenOptions) []byte {
 	case "pbkdf2":
 		for _, passphrase := range opts.Passphrases {
 			if material, err := PBKDF2UnwrapCEK(wrapped, passphrase); err == nil {
+				return material
+			}
+		}
+	case "argon2id":
+		for _, passphrase := range opts.Passphrases {
+			if material, err := Argon2idUnwrapCEK(wrapped, passphrase); err == nil {
 				return material
 			}
 		}
