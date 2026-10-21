@@ -169,6 +169,9 @@ func AESGCMDecrypt(cek, iv, ciphertext, aad []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(iv) != aead.NonceSize() {
+		return nil, fmt.Errorf("%w: IV is not %d bytes", ErrDecryption, aead.NonceSize())
+	}
 	plaintext, err := aead.Open(nil, iv, ciphertext, aad)
 	if err != nil {
 		return nil, fmt.Errorf("%w: the ciphertext or the AAD-bound metadata "+

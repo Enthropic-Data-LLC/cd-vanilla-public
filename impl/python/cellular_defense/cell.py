@@ -472,7 +472,17 @@ class OpenResult:
 Unwrapper = Callable[[dict], "bytes | None"]
 
 
-def cell_open(
+def cell_open(cell: dict, **kw) -> OpenResult:
+    """Open a cell (see ``_cell_open``). A cell whose fields have the wrong
+    JSON types is malformed input, not a programming error: it is reported as
+    ``MalformedCellError`` rather than escaping as AttributeError/TypeError."""
+    try:
+        return _cell_open(cell, **kw)
+    except (AttributeError, TypeError, KeyError, ValueError, IndexError) as exc:
+        raise MalformedCellError(f"malformed cell: {type(exc).__name__}: {exc}") from exc
+
+
+def _cell_open(
     cell: dict,
     *,
     keys: Iterable[KeyRecord] | None = None,

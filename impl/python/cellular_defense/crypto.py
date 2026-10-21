@@ -114,6 +114,8 @@ def aes_gcm_encrypt(cek: bytes, plaintext: bytes, aad: bytes | None, *, iv: byte
 
 def aes_gcm_decrypt(cek: bytes, iv: bytes, ciphertext: bytes, aad: bytes | None) -> bytes:
     """Decrypt and verify. A tag failure here is also an AAD mismatch (§4.4)."""
+    if len(iv) != 12:
+        raise DecryptionError("authentication failed — IV is not 12 bytes")
     try:
         return AESGCM(cek).decrypt(iv, ciphertext, aad)
     except InvalidTag as exc:
