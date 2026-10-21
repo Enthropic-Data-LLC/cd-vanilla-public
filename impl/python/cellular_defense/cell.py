@@ -29,19 +29,31 @@ from .keys import KeyRecord
 from .ulid import ulid
 
 #: The version this library writes.
-CELL_FORMAT_VERSION = "1.3"
+CELL_FORMAT_VERSION = "1.4"
 
 #: Versions this library can read (spec §12).
-SUPPORTED_VERSIONS = frozenset({"1.0", "1.1", "1.2", "1.3"})
+SUPPORTED_VERSIONS = frozenset({"1.0", "1.1", "1.2", "1.3", "1.4"})
 
 #: Versions whose hash/signature/AAD use the canonical serialization (§4.1.1).
 #: Held as a set on purpose: §12 warns that adding a version to
 #: SUPPORTED_VERSIONS while leaving an inline ``version == "1.2"`` test
 #: somewhere silently drops canonicalization, with no error raised anywhere.
-CANONICAL_VERSIONS = frozenset({"1.2", "1.3"})
+CANONICAL_VERSIONS = frozenset({"1.2", "1.3", "1.4"})
 
 #: Versions that bind metadata to the ciphertext as AES-GCM AAD (§4.4).
-AAD_VERSIONS = frozenset({"1.1", "1.2", "1.3"})
+AAD_VERSIONS = frozenset({"1.1", "1.2", "1.3", "1.4"})
+
+#: v1.4 features, each gated by its own set (same reasoning as above):
+#: the version itself is in the AAD (§4.4); the body is Padmé-padded (§5.4);
+#: the sender signature is inside the encrypted manifest (§4.5); access-map
+#: entries carry no fingerprint or label and are found by trial (§6).
+VERSIONED_AAD_VERSIONS = frozenset({"1.4"})
+PADDED_VERSIONS = frozenset({"1.4"})
+INNER_SIG_VERSIONS = frozenset({"1.4"})
+BLIND_ENTRY_VERSIONS = frozenset({"1.4"})
+
+#: Trial decryption costs one ECDH per (entry × key); bound the map (§6).
+MAX_ACCESS_ENTRIES = 256
 
 DEFAULT_POLICY: dict = {
     "copy_protection": "standard",
@@ -78,6 +90,15 @@ def cell_aad(header: dict, version: str) -> bytes | None:
     """
     if version not in AAD_VERSIONS:
         return None
+    if version in VERSIONED_AAD_VERSIONS:
+        # v1.4: an object that includes the version, so relabelling fails the tag.
+        return canonical_bytes({
+            "format": version,
+            "prev_hash": header.get("prev_hash"),
+            "threshold": header.get("threshold"),
+            "lifetime": header.get("lifetime"),
+            "policy": header.get("policy"),
+        })
     meta = [
         header.get("prev_hash"),
         header.get("threshold"),
@@ -105,6 +126,7 @@ class Recipient:
     credential_id: str | None = None
     prf_salt: str | None = None
     prf_output: bytes | None = None
+    argon2: dict | None = None
 
     @classmethod
     def ecdh(cls, spki: str, label: str = "Recipient") -> "Recipient":
@@ -120,6 +142,11 @@ class Recipient:
         return cls(method="pbkdf2", label=label, passphrase=passphrase)
 
     @classmethod
+    def argon2id(cls, passphrase: str, params: dict | None = None) -> "Recipient":
+        """Passphrase entry using Argon2id (v1.4, §6.5). ``params``: m (KiB), t, p."""
+        return cls(method="argon2id", label="", passphrase=passphrase, argon2=params)
+
+    @classmethod
     def prf(cls, credential_id: str, prf_salt: str, prf_output: bytes, label: str = "Security key") -> "Recipient":
         """Wrap under a WebAuthn PRF output the caller has already obtained."""
         return cls(
@@ -131,28 +158,39 @@ class Recipient:
         )
 
 
-def _wrap_entry(recipient: Recipient, key_material: bytes, share_index: int | None) -> dict:
-    entry: dict[str, Any] = {"label": recipient.label, "method": recipient.method}
+def _wrap_entry(recipient: Recipient, key_material: bytes, share_index: int | None,
+                version: str = CELL_FORMAT_VERSION) -> dict:
+    blind = version in BLIND_ENTRY_VERSIONS
+    entry: dict[str, Any] = {"method": recipient.method} if blind else {"label": recipient.label, "method": recipient.method}
 
     if recipient.method == "ecdh-p256":
         if not recipient.spki:
             raise CellError("ecdh-p256 recipient needs an spki")
-        entry["fingerprint"] = crypto.fingerprint(b64decode(recipient.spki, field="spki"))
+        if not blind:
+            entry["fingerprint"] = crypto.fingerprint(b64decode(recipient.spki, field="spki"))
         wrapped = crypto.ecdh_wrap_cek(key_material, recipient.spki)
+    elif recipient.method == "argon2id":
+        if not blind:
+            raise CellError("argon2id entries need format v1.4")
+        if recipient.passphrase is None:
+            raise CellError("argon2id recipient needs a passphrase")
+        wrapped = crypto.argon2id_wrap_cek(key_material, recipient.passphrase, recipient.argon2)
     elif recipient.method == "pbkdf2":
         if recipient.passphrase is None:
             raise CellError("pbkdf2 recipient needs a passphrase")
         wrapped = crypto.pbkdf2_wrap_cek(key_material, recipient.passphrase)
         # A passphrase has no public key, so §6.2 fingerprints the salt instead.
         # It identifies the entry, not the holder — it is not a key fingerprint
-        # and proves nothing about who can open it.
-        entry["fingerprint"] = crypto.sha256(b64decode(wrapped["salt"], field="salt")).hex()[:16]
+        # and proves nothing about who can open it. v1.4 entries carry none.
+        if not blind:
+            entry["fingerprint"] = crypto.sha256(b64decode(wrapped["salt"], field="salt")).hex()[:16]
     elif recipient.method == "yubikey-prf":
         if not (recipient.credential_id and recipient.prf_salt and recipient.prf_output):
             raise CellError("yubikey-prf recipient needs credential_id, prf_salt and prf_output")
-        entry["fingerprint"] = crypto.sha256(
-            b64decode(recipient.credential_id, field="credential_id")
-        ).hex()[:16]
+        if not blind:
+            entry["fingerprint"] = crypto.sha256(
+                b64decode(recipient.credential_id, field="credential_id")
+            ).hex()[:16]
         wrapped = crypto.prf_wrap_cek(
             key_material, recipient.credential_id, recipient.prf_salt, recipient.prf_output
         )
@@ -187,8 +225,9 @@ def cell_create(
     sender: KeyRecord | None = None,
     doc_id: str | None = None,
     created_at: int | None = None,
+    version: str = CELL_FORMAT_VERSION,
 ) -> dict:
-    """Seal ``data`` into a v1.3 cell.
+    """Seal ``data`` into a cell (v1.4 unless ``version`` says otherwise).
 
     ``threshold`` > 1 splits the CEK into one Shamir share per recipient, of
     which that many are needed (§7). ``sender`` adds a ``header_sig``; note that
@@ -200,7 +239,11 @@ def cell_create(
     """
     if not recipients:
         raise CellError("a cell needs at least one recipient")
+    if version not in SUPPORTED_VERSIONS or version not in CANONICAL_VERSIONS:
+        raise CellError(f"cell_create writes v1.2 and later only, not {version!r}")
     required = max(1, min(threshold, len(recipients)))
+    doc_id = doc_id or ulid()
+    created_at = created_at if created_at is not None else int(time.time())
 
     # ── Manifest-prefixed plaintext (§5): filename, type and size live inside
     # the ciphertext, so an observer of the stored cell learns none of them.
@@ -211,11 +254,6 @@ def cell_create(
     }
     if meta:
         manifest["meta"] = meta
-    manifest_bytes = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    plaintext = struct.pack("<I", len(manifest_bytes)) + manifest_bytes + data
-    body = crypto.gzip_compress(plaintext)
-
-    cek = bytearray(__import__("secrets").token_bytes(crypto.CEK_LENGTH))
 
     # ── Metadata is fixed before encryption precisely so it can be bound as AAD.
     header: dict[str, Any] = {
@@ -224,43 +262,65 @@ def cell_create(
         "lifetime": lifetime_mod.normalize(lifetime) or dict(lifetime_mod.PERMANENT),
         "policy": policy or dict(DEFAULT_POLICY),
     }
-    iv, ciphertext = crypto.aes_gcm_encrypt(
-        bytes(cek), body, cell_aad(header, CELL_FORMAT_VERSION)
-    )
+    aad = cell_aad(header, version)
+
+    inner_sig = version in INNER_SIG_VERSIONS
+    if inner_sig and sender is not None:
+        if sender.private is None:
+            raise CellError("signing requires a KeyRecord with a private key")
+        to = sorted(
+            crypto.fingerprint(b64decode(r.spki, field="spki"))
+            for r in recipients if r.method == "ecdh-p256" and r.spki
+        )
+        sig_input = sender_sig_input(
+            version=version, doc_id=doc_id, created_at=created_at, aad=aad,
+            manifest=dict(manifest), content=data, sender_spki=sender.spki, to=to,
+        )
+        manifest["sender"] = {
+            "spki": sender.spki, "to": to,
+            "sig": b64encode(crypto.ecdsa_sign(sender.private, sig_input)),
+        }
+
+    manifest_bytes = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    plaintext = struct.pack("<I", len(manifest_bytes)) + manifest_bytes + data
+    gz = crypto.gzip_compress(plaintext)
+    body = crypto.pad_body(gz) if version in PADDED_VERSIONS else gz
+
+    cek = bytearray(__import__("secrets").token_bytes(crypto.CEK_LENGTH))
+    iv, ciphertext = crypto.aes_gcm_encrypt(bytes(cek), body, aad)
 
     try:
         if required > 1:
             shares = gf256.split(bytes(cek), len(recipients), required)
             access_map = [
-                _wrap_entry(r, shares[i].data, i + 1) for i, r in enumerate(recipients)
+                _wrap_entry(r, shares[i].data, i + 1, version) for i, r in enumerate(recipients)
             ]
         else:
-            access_map = [_wrap_entry(r, bytes(cek), None) for r in recipients]
+            access_map = [_wrap_entry(r, bytes(cek), None, version) for r in recipients]
     finally:
         _wipe(cek)
 
     header["access_map"] = access_map
     header["payload_hash"] = b64encode(crypto.sha256(ciphertext))
 
-    header_bytes = serialize_header(header, CELL_FORMAT_VERSION)
+    header_bytes = serialize_header(header, version)
     cell: dict[str, Any] = {
-        "version": CELL_FORMAT_VERSION,
-        "doc_id": doc_id or ulid(),
-        "created_at": created_at if created_at is not None else int(time.time()),
+        "version": version,
+        "doc_id": doc_id,
+        "created_at": created_at,
         "header": header,
         "header_hash": b64encode(crypto.sha256(header_bytes)),
-        "header_sig": None,
-        "header_sig_by": None,
-        "header_sig_key": None,
-        "payload": {
-            "alg": "AES-256-GCM",
-            "encoding": "base64+gzip",
-            "iv": b64encode(iv),
-            "ciphertext": b64encode(ciphertext),
-        },
+    }
+    if not inner_sig:
+        cell.update({"header_sig": None, "header_sig_by": None, "header_sig_key": None})
+    cell["payload"] = {
+        "alg": "AES-256-GCM",
+        "encoding": "base64+gzip+padme" if version in PADDED_VERSIONS else "base64+gzip",
+        "iv": b64encode(iv),
+        "ciphertext": b64encode(ciphertext),
     }
 
-    if sender is not None:
+    if sender is not None and not inner_sig:
         if sender.private is None:
             raise CellError("signing requires a KeyRecord with a private key")
         cell["header_sig"] = b64encode(crypto.ecdsa_sign(sender.private, header_bytes))
@@ -268,6 +328,24 @@ def cell_create(
         cell["header_sig_key"] = sender.spki
 
     return cell
+
+
+def sender_sig_input(*, version: str, doc_id: Any, created_at: Any, aad: bytes, manifest: dict,
+                     content: bytes, sender_spki: str, to: list) -> bytes:
+    """Bytes the v1.4 inner sender signature covers (§4.5).
+
+    Content, manifest, the authenticated metadata (with the version), the
+    cell's identity and the intended key recipients — so a recipient who
+    re-encrypts the file to someone else cannot make the signature vouch for
+    the new holder.
+    """
+    return canonical_bytes({
+        "purpose": "cell-sender-signature",
+        "version": version, "doc_id": doc_id, "created_at": created_at,
+        "aad": aad.decode("utf-8"), "manifest": manifest,
+        "content_sha256": b64encode(crypto.sha256(content)),
+        "sender_spki": sender_spki, "to": to,
+    })
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -312,6 +390,12 @@ def verify_cell(cell: dict, *, expected_signer: str | None = None) -> VerifyResu
     # field disables the header, ciphertext and signature checks together.
     if not cell.get("header_hash"):
         raise IntegrityError("integrity check failed — header_hash is missing")
+    if version in INNER_SIG_VERSIONS and (cell.get("header_sig") or cell.get("header_sig_key") or cell.get("header_sig_by")):
+        raise MalformedCellError(
+            f"a v{version} cell carries its signature inside the payload — a header signature here is malformed"
+        )
+    if len(header.get("access_map") or []) > MAX_ACCESS_ENTRIES:
+        raise MalformedCellError(f"too many access-map entries (> {MAX_ACCESS_ENTRIES})")
 
     header_bytes = serialize_header(header, version)
     if b64encode(crypto.sha256(header_bytes)) != cell["header_hash"]:
@@ -340,7 +424,7 @@ def verify_cell(cell: dict, *, expected_signer: str | None = None) -> VerifyResu
         # which the signer writes about themselves and can say anything.
         signer_fp = crypto.fingerprint(spki_der)
 
-    if expected_signer is not None:
+    if expected_signer is not None and version not in INNER_SIG_VERSIONS:
         if not signed:
             raise SignatureError(
                 f"expected a cell signed by {expected_signer}, but it carries no signature "
@@ -379,6 +463,8 @@ class OpenResult:
     signer_fingerprint: str | None = None
     claimed_signer: str | None = None
     lifetime: lifetime_mod.Lifetime | None = None
+    #: v1.4: fingerprints of the key recipients the signer addressed (§4.5).
+    signed_to: list | None = None
 
 
 #: An unwrap callback: given one access-map entry, return the key material it
@@ -478,9 +564,10 @@ def cell_open(
             raise NoMatchingKeyError("no matching key — check your key method and try again")
 
     aad = cell_aad(header, version) if not is_legacy else None
-    compressed = crypto.aes_gcm_decrypt(
+    decrypted = crypto.aes_gcm_decrypt(
         cek, b64decode(iv_b64, field="iv"), b64decode(ct_b64, field="ciphertext"), aad
     )
+    compressed = crypto.unpad_body(decrypted) if version in PADDED_VERSIONS else decrypted
     plain = crypto.gzip_decompress(compressed)
 
     # ── Manifest-prefixed payload (§5), or a legacy cell with plaintext metadata.
@@ -502,6 +589,33 @@ def cell_open(
         content_type = manifest.get("content_type") or "application/octet-stream"
         file_meta = manifest.get("meta")
         data = plain[4 + manifest_len :]
+
+        if version in INNER_SIG_VERSIONS:
+            sender = manifest.get("sender")
+            if sender is not None:
+                if not (isinstance(sender, dict) and isinstance(sender.get("spki"), str)
+                        and isinstance(sender.get("sig"), str) and isinstance(sender.get("to"), list)):
+                    raise MalformedCellError("malformed sender signature")
+                unsigned = {k: v for k, v in manifest.items() if k != "sender"}
+                spki_der = b64decode(sender["spki"], field="sender.spki")
+                sig_input = sender_sig_input(
+                    version=version, doc_id=cell.get("doc_id"), created_at=cell.get("created_at"),
+                    aad=aad or b"", manifest=unsigned, content=data,
+                    sender_spki=sender["spki"], to=sender["to"],
+                )
+                if not crypto.ecdsa_verify(crypto.load_spki(spki_der),
+                                           b64decode(sender["sig"], field="sender.sig"), sig_input):
+                    raise SignatureError("sender signature invalid — cell may be forged")
+                signer = crypto.fingerprint(spki_der)
+                if expected_signer is not None and signer != expected_signer:
+                    raise SignatureError(f"cell is signed by {signer}, not the expected {expected_signer}")
+                return OpenResult(
+                    data=data, filename=filename, content_type=content_type, meta=file_meta,
+                    used_recipient=used_recipient, signed=True, signer_fingerprint=signer,
+                    claimed_signer=None, lifetime=lt, signed_to=list(sender["to"]),
+                )
+            if expected_signer is not None:
+                raise SignatureError(f"expected a cell signed by {expected_signer}, but it carries no signature")
 
     return OpenResult(
         data=data,
@@ -545,6 +659,15 @@ def _default_unwrapper(
             for record in candidates:
                 try:
                     return crypto.ecdh_unwrap_cek(wrapped, record.private)  # type: ignore[arg-type]
+                except Exception:
+                    continue
+            return None
+        if method == "argon2id":
+            for passphrase in passphrase_list:
+                try:
+                    return crypto.argon2id_unwrap_cek(wrapped, passphrase)
+                except MalformedCellError:
+                    raise
                 except Exception:
                     continue
             return None

@@ -12,11 +12,13 @@ sealing. Re-running this script produces a new, equally valid set; do not do so
 casually, because the point of a committed vector is that it stays put.
 
 Older format versions are built here by hand from the primitives. Nothing writes
-1.0, 1.1 or 1.2 any more — the library deliberately writes 1.3 only — but §12
+1.0, 1.1 or 1.2 any more — the library writes 1.4, and 1.3 on request — but §12
 requires readers to keep opening them, and a version nobody has a vector for is
 a version nobody actually tests.
 
-    python3 conformance/make-vectors.py
+    python3 conformance/make-vectors.py              # regenerate EVERYTHING (rarely)
+    python3 conformance/make-vectors.py --add-v14    # (re)write only the v1.4 vectors,
+                                                     # leaving every committed vector as is
 """
 
 from __future__ import annotations
@@ -35,10 +37,17 @@ sys.path.insert(0, str(ROOT.parent / "impl" / "python"))
 from cryptography.hazmat.primitives import keywrap  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
 
-from cellular_defense import KeyRecord, Recipient, cell_create, cell_open  # noqa: E402
+from cellular_defense import KeyRecord, Recipient, cell_open  # noqa: E402
+from cellular_defense import cell_create as _cell_create  # noqa: E402
 from cellular_defense import crypto  # noqa: E402
 from cellular_defense.cell import cell_aad, serialize_header  # noqa: E402
 from cellular_defense.codec import b64encode  # noqa: E402
+
+def cell_create(*args, **kwargs):
+    """The v1.3 vectors stay v1.3: the library writes 1.4 by default now."""
+    kwargs.setdefault("version", "1.3")
+    return _cell_create(*args, **kwargs)
+
 
 KEYS = ROOT / "keys"
 VECTORS = ROOT / "vectors"
@@ -225,6 +234,196 @@ def rehash(cell: dict) -> dict:
         crypto.sha256(serialize_header(cell["header"], cell["version"]))
     )
     return cell
+
+
+REJECT_REASONS = [
+    "header-hash-missing", "header-hash-mismatch", "payload-hash-mismatch",
+    "signature-invalid", "signature-der-encoded", "aad-mismatch",
+    "unsupported-version", "quorum-not-met", "no-matching-key",
+    "retention-expired", "timed-release-locked",
+    # v1.4
+    "signature-misplaced", "padding-invalid", "access-map-too-large",
+]
+
+
+def seal_v14_with_body(data: bytes, filename: str, recipient: KeyRecord, body_hook) -> dict:
+    """A v1.4 cell sealed by hand, so the padded body can be malformed on purpose."""
+    manifest = {"filename": filename, "content_type": "text/plain", "size": len(data)}
+    manifest_bytes = json.dumps(manifest, separators=(",", ":")).encode("utf-8")
+    gz = crypto.gzip_compress(struct.pack("<I", len(manifest_bytes)) + manifest_bytes + data)
+    body = body_hook(bytearray(crypto.pad_body(gz)))
+    cek = secrets.token_bytes(32)
+    header: dict = {
+        "prev_hash": None,
+        "threshold": {"required": 1, "of_total": 1},
+        "lifetime": {"type": "permanent",
+                     "advisory": {"retain_until": None, "release_at": None, "single_use": False, "minimum_atl": 1},
+                     "disposal": {"at": None, "action": "none"}},
+        "policy": {"copy_protection": "standard", "watermark_mode": "none",
+                   "created_on_origin": None, "origin_sig": None},
+    }
+    iv, ciphertext = crypto.aes_gcm_encrypt(cek, bytes(body), cell_aad(header, "1.4"))
+    header["access_map"] = [{"method": "ecdh-p256", "wrapped_cek": crypto.ecdh_wrap_cek(cek, recipient.spki)}]
+    header["payload_hash"] = b64encode(crypto.sha256(ciphertext))
+    return {
+        "version": "1.4", "doc_id": "01CONFORMANCE14PAD000000000", "created_at": CREATED_AT,
+        "header": header,
+        "header_hash": b64encode(crypto.sha256(serialize_header(header, "1.4"))),
+        "payload": {"alg": "AES-256-GCM", "encoding": "base64+gzip+padme",
+                    "iv": b64encode(iv), "ciphertext": b64encode(ciphertext)},
+    }
+
+
+def build_v14(deal_file: str, unicode_file: str) -> None:
+    """v1.4 vectors: blind entries, inner signature, Padmé, Argon2id (§4.5, §5.4, §6)."""
+    alice, bob, carol = (key(n) for n in ("alice", "bob", "carol"))
+    mallory_only = {"keys": ["mallory"]}
+
+    def seal(*args, **kwargs):
+        kwargs.setdefault("version", "1.4")
+        kwargs.setdefault("created_at", CREATED_AT)
+        return _cell_create(*args, **kwargs)
+
+    def clone(source: dict) -> dict:
+        return json.loads(json.dumps(source))
+
+    add("v14-ecdh-single",
+        seal(DEAL, "deal.txt", [Recipient.for_key(alice)], content_type="text/plain"),
+        expect="open", description="v1.4, one ECDH recipient, unsigned; entry carries no fingerprint or label",
+        open_with={"keys": ["alice"]}, plaintext=DEAL, payload_file=deal_file,
+        filename="deal.txt", content_type="text/plain", must_not_open_with=mallory_only,
+        notes="Openers find their entry by trial decryption: AES-KW's integrity check "
+              "rejects a wrong key (§6).")
+
+    add("v14-ecdh-signed",
+        seal(DEAL, "deal.txt", [Recipient.for_key(alice)], sender=bob,
+             content_type="text/plain", meta={"case": "2026-0417"}),
+        expect="open",
+        description="v1.4, signed by bob INSIDE the encrypted manifest; nothing outside the "
+                    "ciphertext names bob",
+        open_with={"keys": ["alice"]}, plaintext=DEAL, payload_file=deal_file,
+        filename="deal.txt", content_type="text/plain", meta={"case": "2026-0417"},
+        signer="bob", must_not_open_with=mallory_only,
+        notes="sender.to lists alice's fingerprint; the signer is the fingerprint of "
+              "sender.spki, recomputed (§4.5).")
+
+    add("v14-multi-recipient",
+        seal(DEAL, "deal.txt", [Recipient.for_key(k) for k in (alice, bob, carol)], content_type="text/plain"),
+        expect="open", description="v1.4, three blind ECDH entries; carol's is the last one tried",
+        open_with={"keys": ["carol"]}, plaintext=DEAL, payload_file=deal_file,
+        filename="deal.txt", content_type="text/plain", must_not_open_with=mallory_only)
+
+    add("v14-quorum-2of3",
+        seal(DEAL, "deal.txt", [Recipient.for_key(k) for k in (alice, bob, carol)],
+             threshold=2, content_type="text/plain"),
+        expect="open", description="v1.4, 2-of-3 Shamir quorum over blind entries",
+        open_with={"keys": ["carol", "alice"]}, plaintext=DEAL, payload_file=deal_file,
+        filename="deal.txt", content_type="text/plain")
+
+    add("v14-argon2id",
+        seal(DEAL, "deal.txt", [Recipient.argon2id(PASSPHRASE)], content_type="text/plain"),
+        expect="open",
+        description="v1.4, Argon2id passphrase entry at the default parameters (m=65536 KiB, t=3, p=4)",
+        open_with={"passphrases": [PASSPHRASE]}, plaintext=DEAL, payload_file=deal_file,
+        filename="deal.txt", content_type="text/plain",
+        notes="The KDF input is the UTF-8 of the passphrase's NFC form (§6.5).")
+
+    add("v14-pbkdf2",
+        seal(DEAL, "deal.txt", [Recipient.passphrase_(PASSPHRASE)], content_type="text/plain"),
+        expect="open", description="v1.4 still accepts a PBKDF2 entry; it is blind like every other",
+        open_with={"passphrases": [PASSPHRASE]}, plaintext=DEAL, payload_file=deal_file,
+        filename="deal.txt", content_type="text/plain")
+
+    add("v14-unicode-signed",
+        seal(UNICODE, "rapport-financiér-😀.txt", [Recipient.for_key(alice)], sender=bob,
+             content_type="text/plain; charset=utf-8", meta={"note": "é 😀", "n": [1, 2.5, None]}),
+        expect="open",
+        description="v1.4 signed cell whose manifest is non-ASCII — the signed bytes are the "
+                    "canonical JSON of the manifest, so every port must canonicalize identically",
+        open_with={"keys": ["alice"]}, plaintext=UNICODE, payload_file=unicode_file,
+        filename="rapport-financiér-😀.txt", content_type="text/plain; charset=utf-8",
+        meta={"note": "é 😀", "n": [1, 2.5, None]}, signer="bob")
+
+    good = seal(DEAL, "deal.txt", [Recipient.for_key(alice)], content_type="text/plain")
+    signed = seal(DEAL, "deal.txt", [Recipient.for_key(alice)], sender=bob, content_type="text/plain")
+
+    c = clone(good)
+    c["header_sig"], c["header_sig_by"], c["header_sig_key"] = "AAAA", "bob", bob.spki
+    add("reject-v14-header-signature", c, expect="reject",
+        description="a v1.4 cell carrying a header signature", open_with={"keys": ["alice"]},
+        reject_reason="signature-misplaced", reject_at_step=1,
+        notes="v1.4 signatures live inside the payload; a header_sig here is malformed (§4.5).")
+
+    c = clone(good)
+    c["version"] = "1.3"
+    add("reject-v14-version-relabelled", c, expect="reject",
+        description="a v1.4 cell relabelled 1.3 (header_hash is unchanged: both canonicalize)",
+        open_with={"keys": ["alice"]}, reject_reason="aad-mismatch", reject_at_step=4,
+        notes="v1.4's AAD includes the version, so the GCM tag fails (§4.4).")
+
+    c = clone(signed)
+    c["created_at"] += 1
+    add("reject-v14-inner-signature", c, expect="reject",
+        description="signed v1.4 cell whose created_at was changed after sealing",
+        open_with={"keys": ["alice"]}, reject_reason="signature-invalid", reject_at_step=5,
+        notes="created_at and doc_id are outside the AAD but inside the signed input (§4.5); "
+              "the check runs after decryption, when the signature becomes visible.")
+
+    add("reject-v14-padding-nonzero",
+        seal_v14_with_body(DEAL, "deal.txt", alice, lambda b: (b.__setitem__(len(b) - 1, 7), b)[1]),
+        expect="reject", description="padding bytes after the framed body are not all zero",
+        open_with={"keys": ["alice"]}, reject_reason="padding-invalid", reject_at_step=5)
+
+    add("reject-v14-padding-length",
+        seal_v14_with_body(DEAL, "deal.txt", alice,
+                           lambda b: (b.__setitem__(slice(0, 4), struct.pack("<I", len(b))), b)[1]),
+        expect="reject", description="the framed length runs past the end of the body",
+        open_with={"keys": ["alice"]}, reject_reason="padding-invalid", reject_at_step=5)
+
+    c = clone(good)
+    c["header"]["access_map"] = c["header"]["access_map"] * 257
+    add("reject-v14-access-map-too-large", rehash(c), expect="reject",
+        description="257 access-map entries (the limit is 256)", open_with={"keys": ["alice"]},
+        reject_reason="access-map-too-large", reject_at_step=1,
+        notes="Trial decryption costs one ECDH per entry and key; the bound is a DoS guard (§6).")
+
+    c = seal(DEAL, "deal.txt", [Recipient.argon2id(PASSPHRASE, {"m": 19456, "t": 2, "p": 1})],
+             content_type="text/plain")
+    c["header"]["access_map"][0]["wrapped_cek"].update({"m": 8, "t": 1, "p": 1})
+    add("reject-v14-argon2id-weak", rehash(c), expect="reject",
+        description="Argon2id entry claiming m=8 KiB, t=1", open_with={"passphrases": [PASSPHRASE]},
+        reject_reason="no-matching-key", reject_at_step=4,
+        notes="Openers refuse the parameters (§6.5) and so recover no key from this entry.")
+
+
+def write_manifest() -> None:
+    manifest = {
+        "version": 1,
+        "spec": "1.4",
+        "generated_by": "conformance/make-vectors.py",
+        "keys_dir": "../keys",
+        "passphrase": PASSPHRASE,
+        "reject_reasons": REJECT_REASONS,
+        "vectors": vectors,
+    }
+    (VECTORS / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def add_v14_only() -> int:
+    """Rewrite just the v1.4 vectors; every committed vector stays byte-for-byte."""
+    existing = json.loads((VECTORS / "manifest.json").read_text())
+    is_v14 = lambda v: v["id"].startswith(("v14-", "reject-v14-"))
+    for v in existing["vectors"]:
+        if is_v14(v):
+            (VECTORS / v["file"]).unlink(missing_ok=True)
+    vectors.extend(v for v in existing["vectors"] if not is_v14(v))
+    build_v14("payloads/deal.txt", "payloads/unicode.txt")
+    write_manifest()
+    added = sum(1 for v in vectors if is_v14(v))
+    print(f"wrote {added} v1.4 vectors; manifest now holds {len(vectors)}")
+    return 0
 
 
 def main() -> int:
@@ -506,23 +705,8 @@ def main() -> int:
         notes="Same advisory caveat as reject-retention-expired. Evaluated against the "
               "wall clock: this vector expires as a test on 2100-01-01.")
 
-    manifest = {
-        "version": 1,
-        "spec": "1.3",
-        "generated_by": "conformance/make-vectors.py",
-        "keys_dir": "../keys",
-        "passphrase": PASSPHRASE,
-        "reject_reasons": [
-            "header-hash-missing", "header-hash-mismatch", "payload-hash-mismatch",
-            "signature-invalid", "signature-der-encoded", "aad-mismatch",
-            "unsupported-version", "quorum-not-met", "no-matching-key",
-            "retention-expired", "timed-release-locked",
-        ],
-        "vectors": vectors,
-    }
-    (VECTORS / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    build_v14(deal_file, unicode_file)
+    write_manifest()
 
     opens = sum(1 for v in vectors if v["expect"] == "open")
     print(f"wrote {len(vectors)} vectors ({opens} open, {len(vectors) - opens} reject)")
@@ -530,4 +714,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(add_v14_only() if "--add-v14" in sys.argv[1:] else main())

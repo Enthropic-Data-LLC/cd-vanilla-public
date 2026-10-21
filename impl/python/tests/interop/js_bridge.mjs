@@ -29,7 +29,7 @@ globalThis.indexedDB = {};
 const src = readFileSync(`${ROOT}/cell-crypto.js`, 'utf8');
 const exportsList =
   'return { toB64, fromB64, sha256, toHex, canonicalize, serializeHeader, cellAad, ' +
-  'cellCreate, cellOpen, ecdhUnwrapCek, pbkdf2UnwrapCek };';
+  'cellCreate, cellOpen, ecdhUnwrapCek, pbkdf2UnwrapCek, argon2idUnwrapCek };';
 const w = new Function(src + '\n;' + exportsList)();
 
 // A minimal stand-in for the browser File the reference expects.
@@ -71,6 +71,7 @@ if (cmd === 'keypair') {
       prevHash: spec.prev_hash || null,
       meta: spec.meta || undefined,
       senderRec: spec.sender || undefined,
+      version: spec.version || undefined,
     },
   );
   writeFileSync(b, JSON.stringify(cell, null, 2));
@@ -86,9 +87,10 @@ if (cmd === 'keypair') {
       }
       return null;
     }
-    if (entry.method === 'pbkdf2') {
+    if (entry.method === 'pbkdf2' || entry.method === 'argon2id') {
+      const unwrap = entry.method === 'pbkdf2' ? w.pbkdf2UnwrapCek : w.argon2idUnwrapCek;
       for (const pass of spec.passphrases || []) {
-        try { return await w.pbkdf2UnwrapCek(entry.wrapped_cek, pass); } catch { /* next */ }
+        try { return await unwrap(entry.wrapped_cek, pass); } catch { /* next */ }
       }
       return null;
     }
@@ -100,6 +102,7 @@ if (cmd === 'keypair') {
     content_type: result.contentType,
     meta: result.meta,
     sig_verified: result.sigVerified,
+    signed_to: result.signedTo ?? null,
   }, null, 2));
 
 } else {

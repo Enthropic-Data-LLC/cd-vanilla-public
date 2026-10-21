@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 from . import crypto, lifetime as lifetime_mod
-from .cell import Recipient, cell_create, cell_open, verify_cell
+from .cell import INNER_SIG_VERSIONS, Recipient, cell_create, cell_open, verify_cell
 from .codec import b64decode
 from .errors import CellError
 from .keys import KeyRecord
@@ -77,7 +77,7 @@ def cmd_seal(args: argparse.Namespace) -> int:
         if passphrase != getpass.getpass("Repeat: "):
             print("passphrases do not match", file=sys.stderr)
             return 1
-        recipients.append(Recipient.passphrase_(passphrase))
+        recipients.append(Recipient.argon2id(passphrase))   # v1.4 §6.5; PBKDF2 stays readable
     if not recipients:
         print("a cell needs at least one recipient (--to or --passphrase)", file=sys.stderr)
         return 1
@@ -104,10 +104,19 @@ def cmd_seal(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    result = verify_cell(_read_cell(Path(args.cell)), expected_signer=args.expect_signer)
+    cell = _read_cell(Path(args.cell))
+    result = verify_cell(cell, expected_signer=args.expect_signer)
     print(f"version        {result.version}")
     print("header_hash    ok")
     print(f"payload_hash   {'ok' if result.payload_hash_ok else 'absent'}")
+    if result.version in INNER_SIG_VERSIONS:
+        # §4.5: the signature is inside the ciphertext, so who signed is not
+        # visible here — by design. `open` verifies it.
+        print("signature      inside the encrypted payload — `open` verifies it")
+        if args.expect_signer:
+            print("--expect-signer needs `open` for a v1.4 cell", file=sys.stderr)
+            return 2
+        return 0
     if result.signed:
         print(f"signature      valid, by key {result.signer_fingerprint}")
         print(f"               (claims to be {result.claimed_signer!r} — self-asserted, "
@@ -174,6 +183,8 @@ def cmd_open(args: argparse.Namespace) -> int:
     print(f"wrote {destination}  ({len(result.data)} bytes, {result.content_type})")
     if result.signed:
         print(f"signed by key {result.signer_fingerprint}")
+        if result.signed_to is not None:
+            print(f"signed for     {', '.join(result.signed_to) or '(no key recipients)'}")
     if result.meta:
         print(f"sender meta: {json.dumps(result.meta, ensure_ascii=False)}")
     return 0

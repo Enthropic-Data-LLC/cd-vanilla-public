@@ -229,7 +229,7 @@ test('Quorum', '2-of-3: decrypt succeeds with keys 0+2 (skipping key 1)', async 
   const result = await w.cellOpen(cell, async (r) => {
     if (r.method !== 'ecdh-p256') return null;
     for (const k of active) {
-      if (r.fingerprint !== k.fingerprint) continue;
+      if (r.fingerprint && r.fingerprint !== k.fingerprint) continue;
       try { return await w.ecdhUnwrapCek(r.wrapped_cek, k.priv); } catch { }
     }
     return null;
@@ -241,8 +241,8 @@ test('Quorum', '2-of-3: only 1 key provided → rejects', async () => {
   const recs = await Promise.all([ecdhPair('A'), ecdhPair('B'), ecdhPair('C')]);
   const cell = await w.cellCreate(mkFile('q', 'q.txt', 'text/plain'), recs, { threshold: 2 });
   await rejects(() => w.cellOpen(cell, async (r) => {
-    if (r.fingerprint !== recs[0].fingerprint) return null;
-    return w.ecdhUnwrapCek(r.wrapped_cek, recs[0].priv);
+    if (r.fingerprint && r.fingerprint !== recs[0].fingerprint) return null;
+    try { return await w.ecdhUnwrapCek(r.wrapped_cek, recs[0].priv); } catch { return null; }
   }), 'Quorum not met');
 });
 
@@ -252,7 +252,7 @@ test('Quorum', '3-of-3: exactly 3 required, 3 provided → succeeds', async () =
   const result = await w.cellOpen(cell, async (r) => {
     if (r.method !== 'ecdh-p256') return null;
     for (const k of recs) {
-      if (r.fingerprint !== k.fingerprint) continue;
+      if (r.fingerprint && r.fingerprint !== k.fingerprint) continue;
       try { return await w.ecdhUnwrapCek(r.wrapped_cek, k.priv); } catch { }
     }
     return null;
@@ -266,7 +266,7 @@ test('Quorum', 'usedRecipient label says quorum on threshold open', async () => 
   const result = await w.cellOpen(cell, async (r) => {
     if (r.method !== 'ecdh-p256') return null;
     for (const k of recs) {
-      if (r.fingerprint !== k.fingerprint) continue;
+      if (r.fingerprint && r.fingerprint !== k.fingerprint) continue;
       try { return await w.ecdhUnwrapCek(r.wrapped_cek, k.priv); } catch { }
     }
     return null;
@@ -325,7 +325,7 @@ test('Tamper', 'AAD: edited metadata + recomputed header_hash on UNSIGNED cell �
   // even when the attacker makes the canonical header_hash consistent.
   const rec  = await ecdhPair();
   const cell = await w.cellCreate(mkFile('aad tamper', 'a.txt', 'text/plain'), [rec]);
-  eq(cell.version, '1.3', 'precondition: AAD-bound format');
+  assert(['1.1', '1.2', '1.3', '1.4'].includes(cell.version), 'precondition: AAD-bound format');
   cell.header.policy.copy_protection = 'none';                 // downgrade policy
   cell.header.lifetime.advisory.retain_until = 9999999999;     // extend retention
   const hb = new TextEncoder().encode(w.canonicalize(cell.header));
@@ -348,7 +348,7 @@ test('Tamper', 'replaced header_hash (consistent lie) → sig still rejects', as
   const rec    = await ecdhPair();
   const signer = await ecdhPair('Signer');
   const senderRec = { pkcs8: signer.pkcs8, spki: signer.spki, fingerprint: signer.fingerprint };
-  const cell   = await w.cellCreate(mkFile('signed', 's.txt', 'text/plain'), [rec], { senderRec });
+  const cell   = await w.cellCreate(mkFile('signed', 's.txt', 'text/plain'), [rec], { senderRec, version: '1.3' });
   // Attacker recomputes header_hash (canonical) after mutating header (strips the hash check)
   cell.header.policy.copy_protection = 'none';
   const hb = new TextEncoder().encode(w.canonicalize(cell.header));
@@ -380,7 +380,7 @@ test('Canonical', 'reformatted (key-reordered) header still verifies + decrypts'
   const cell = await w.cellCreate(mkFile('reformat me', 'r.txt', 'text/plain'), [rec], {
     policy: { copy_protection: 'strict', watermark_mode: 'none', created_on_origin: 'o', origin_sig: null },
   });
-  eq(cell.version, '1.3');
+  eq(cell.version, '1.4');
   cell.header = reorderKeys(cell.header);          // simulate a JSON pretty-printer / re-orderer
   const result = await openWith(cell, rec);        // header_hash + AAD must still pass
   eq(new TextDecoder().decode(result.bytes), 'reformat me');
@@ -417,8 +417,8 @@ test('Signature', 'signed cell → sigVerified equals signer fingerprint', async
   const rec        = await ecdhPair();
   const signer     = await ecdhPair('Signer');
   const senderRec  = { pkcs8: signer.pkcs8, spki: signer.spki, fingerprint: signer.fingerprint };
-  const cell       = await w.cellCreate(mkFile('signed', 's.txt', 'text/plain'), [rec], { senderRec });
-  assert(cell.header_sig !== null, 'header_sig should be present');
+  const cell       = await w.cellCreate(mkFile('signed', 's.txt', 'text/plain'), [rec], { senderRec, version: '1.3' });
+  assert(cell.header_sig, 'header_sig should be present on a v1.3 cell');
   const result     = await openWith(cell, rec);
   eq(result.sigVerified, signer.fingerprint);
 });
@@ -427,7 +427,7 @@ test('Signature', 'corrupted header_sig byte → rejected', async () => {
   const rec       = await ecdhPair();
   const signer    = await ecdhPair('Signer');
   const senderRec = { pkcs8: signer.pkcs8, spki: signer.spki, fingerprint: signer.fingerprint };
-  const cell      = await w.cellCreate(mkFile('signed2', 's.txt', 'text/plain'), [rec], { senderRec });
+  const cell      = await w.cellCreate(mkFile('signed2', 's.txt', 'text/plain'), [rec], { senderRec, version: '1.3' });
   const sig       = w.fromB64(cell.header_sig);
   sig[8] ^= 0xff;
   cell.header_sig = w.toB64(sig);
@@ -554,10 +554,18 @@ test('Versioning', 'a v1.2 cell still opens unchanged after the 1.3 split', asyn
   if (/Unsupported/i.test(msg)) throw new Error('v1.2 was rejected as unknown: ' + msg);
 });
 
-test('Versioning', 'created cell has version 1.3', async () => {
+test('Versioning', 'created cell has version 1.4', async () => {
   const rec  = await ecdhPair();
   const cell = await w.cellCreate(mkFile('v', 'v.txt', 'text/plain'), [rec]);
+  eq(cell.version, '1.4');
+});
+
+test('Versioning', 'v1.3 is still writable on request, and opens', async () => {
+  const rec  = await ecdhPair();
+  const cell = await w.cellCreate(mkFile('old', 'o.txt', 'text/plain'), [rec], { version: '1.3' });
   eq(cell.version, '1.3');
+  eq(cell.header.access_map[0].fingerprint, rec.fingerprint, 'v1.3 entries keep their fingerprint');
+  eq(new TextDecoder().decode((await openWith(cell, rec)).bytes), 'old');
 });
 
 // ─── prev_hash / Mitosis ──────────────────────────────────────────────────────
@@ -641,6 +649,153 @@ test('Legacy', 'v2.0 cell (cd_version, no hkdf_salt, plaintext metadata) opens c
 
 skip('YubiKey', 'PRF wrap / unwrap', 'requires physical hardware — test manually in browser');
 skip('YubiKey', 'PRF registration smoke test', 'requires physical hardware — test manually in browser');
+
+
+// ─── v1.4: blind recipients, inner signature, padding, Argon2id ──────────────
+
+const enc = (x) => new TextEncoder().encode(x);
+const FAST_ARGON = { m: 19456, t: 2, p: 1 };   // the floor openers accept — keeps tests quick
+
+test('v1.4', 'access-map entries name no one: no fingerprint, no label, no header signature', async () => {
+  // labels contain spaces, which base64 never does, so a match cannot be chance
+  const a = await ecdhPair('Ana — laptop'), b = await ecdhPair('Bo — phone');
+  const signer = await ecdhPair('Sig — desk');
+  const cell = await w.cellCreate(mkFile('x', 'x.txt', 'text/plain'), [a, b],
+    { senderRec: { pkcs8: signer.pkcs8, spki: signer.spki, fingerprint: signer.fingerprint } });
+  for (const e of cell.header.access_map) {
+    eq(e.fingerprint, undefined, 'entry fingerprint'); eq(e.label, undefined, 'entry label');
+  }
+  const outside = JSON.stringify({ ...cell, payload: undefined });
+  for (const k of [a, b, signer])
+    for (const v of [k.fingerprint, k.spki, k.label])
+      assert(!outside.includes(v), `"${v.slice(0, 12)}…" visible outside the ciphertext`);
+  eq(cell.header_sig, undefined); eq(cell.header_sig_key, undefined); eq(cell.header_sig_by, undefined);
+});
+
+test('v1.4', 'trial decryption finds the right key among several; a stranger opens nothing', async () => {
+  const a = await ecdhPair('A'), b = await ecdhPair('B'), mallory = await ecdhPair('M');
+  const cell = await w.cellCreate(mkFile('for b', 'b.txt', 'text/plain'), [a, b]);
+  const keys = [mallory, b];                       // b is not first in the keychain
+  const res = await w.cellOpen(cell, async (r) => {
+    for (const k of keys) { try { return await w.ecdhUnwrapCek(r.wrapped_cek, k.priv); } catch { } }
+    return null;
+  });
+  eq(new TextDecoder().decode(res.bytes), 'for b');
+  await rejects(() => openWith(cell, mallory), 'No matching key');
+});
+
+test('v1.4', 'quorum works with blind entries (2-of-3, trial decryption)', async () => {
+  const recs = await Promise.all([ecdhPair('A'), ecdhPair('B'), ecdhPair('C')]);
+  const cell = await w.cellCreate(mkFile('q14', 'q.txt', 'text/plain'), recs, { threshold: 2 });
+  const have = [recs[2], recs[0]];
+  const res = await w.cellOpen(cell, async (r) => {
+    for (const k of have) { try { return await w.ecdhUnwrapCek(r.wrapped_cek, k.priv); } catch { } }
+    return null;
+  });
+  eq(new TextDecoder().decode(res.bytes), 'q14');
+});
+
+test('v1.4', 'inner signature: verified, signer from the key, intended recipients listed', async () => {
+  const a = await ecdhPair('A'), signer = await ecdhPair('Signer');
+  const cell = await w.cellCreate(mkFile('signed 1.4', 's.txt', 'text/plain'), [a],
+    { senderRec: { pkcs8: signer.pkcs8, spki: signer.spki, fingerprint: 'claimed-anything' } });
+  const res = await openWith(cell, a);
+  eq(res.sigVerified, signer.fingerprint, 'fingerprint must be recomputed from the key');
+  eq(res.sigKey, signer.spki);
+  eq(JSON.stringify(res.signedTo), JSON.stringify([a.fingerprint]));
+});
+
+test('v1.4', 'inner signature with a non-extractable ECDSA CryptoKey (sealed key)', async () => {
+  const a = await ecdhPair('A'), signer = await ecdhPair('Signer');
+  const sig = await w.crypto.subtle.importKey('pkcs8', w.fromB64(signer.pkcs8),
+    { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  const cell = await w.cellCreate(mkFile('sealed signer', 's.txt', 'text/plain'), [a],
+    { senderRec: { sig, spki: signer.spki } });
+  eq((await openWith(cell, a)).sigVerified, signer.fingerprint);
+});
+
+test('v1.4', 'inner signature binds the cell identity: edited created_at or doc_id → rejected', async () => {
+  const a = await ecdhPair('A'), signer = await ecdhPair('Signer');
+  const senderRec = { pkcs8: signer.pkcs8, spki: signer.spki };
+  for (const field of ['created_at', 'doc_id']) {
+    const cell = await w.cellCreate(mkFile('bind', 'b.txt', 'text/plain'), [a], { senderRec });
+    cell[field] = field === 'created_at' ? cell.created_at + 1 : 'X' + cell.doc_id.slice(1);
+    await rejects(() => openWith(cell, a), 'Sender signature invalid');
+  }
+});
+
+test('v1.4', 'a header signature on a v1.4 cell is refused', async () => {
+  const a = await ecdhPair('A');
+  const cell = await w.cellCreate(mkFile('x', 'x.txt', 'text/plain'), [a]);
+  cell.header_sig = 'AAAA'; cell.header_sig_key = a.spki;
+  await rejects(() => openWith(cell, a), 'inside the payload');
+});
+
+test('v1.4', 'relabelling the version fails: the version is authenticated', async () => {
+  const a = await ecdhPair('A');
+  const cell = await w.cellCreate(mkFile('v', 'v.txt', 'text/plain'), [a]);
+  cell.version = '1.3';
+  await rejects(() => openWith(cell, a));
+});
+
+test('v1.4', 'padding: small payloads share one size; Padmé sizes; strict unpadding', async () => {
+  const a = await ecdhPair('A');
+  const one = await w.cellCreate(mkFile('x', 'x.txt', 'text/plain'), [a]);
+  const big = await w.cellCreate(mkFile('y'.repeat(300), 'x.txt', 'text/plain'), [a]);
+  eq(w.fromB64(one.payload.ciphertext).length, w.fromB64(big.payload.ciphertext).length, 'sizes differ');
+  eq(w.fromB64(one.payload.ciphertext).length, 512 + 16, 'floor + GCM tag');
+  eq(w.padmeLength(100), 512); eq(w.padmeLength(1000), 1024); eq(w.padmeLength(1 << 20), 1 << 20);
+  eq(w.padmeLength(1000001), 1015808);
+  for (const L of [513, 4097, 99999, 12345678]) {
+    const P = w.padmeLength(L);
+    assert(P >= L && P <= L * 1.12 + 1, `overhead out of bounds at ${L}: ${P}`);
+  }
+  const body = w.padBody(new Uint8Array([1, 2, 3]));
+  eq(Array.from(w.unpadBody(body)).join(), '1,2,3');
+  body[body.length - 1] = 7;
+  let msg = ''; try { w.unpadBody(body); } catch (e) { msg = e.message; }
+  assert(/non-zero padding/.test(msg), 'non-zero padding accepted');
+});
+
+test('v1.4', 'BLAKE2b and Argon2id match RFC 7693 / RFC 9106 test vectors', () => {
+  eq(w.toHex(w.blake2b(enc('abc'), 64)),
+     'ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923');
+  const tag = w.argon2id(new Uint8Array(32).fill(1), new Uint8Array(16).fill(2),
+    { t: 3, m: 32, p: 4, tagLen: 32, secret: new Uint8Array(8).fill(3), ad: new Uint8Array(12).fill(4) });
+  eq(w.toHex(tag), '0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659');
+});
+
+test('v1.4', 'argon2id entry: round-trips, refuses a wrong passphrase and weak parameters', async () => {
+  const cell = await w.cellCreate(mkFile('argon', 'a.txt', 'text/plain'),
+    [{ method: 'argon2id', passphrase: 'correct horse battery staple', argon2: FAST_ARGON }]);
+  const e = cell.header.access_map[0];
+  eq(e.method, 'argon2id'); eq(e.wrapped_cek.m, 19456); eq(e.label, undefined);
+  const open = (pass) => w.cellOpen(cell, async (r) => r.method === 'argon2id' ? w.argon2idUnwrapCek(r.wrapped_cek, pass) : null);
+  eq(new TextDecoder().decode((await open('correct horse battery staple')).bytes), 'argon');
+  await rejects(() => open('wrong horse'), 'No matching key');
+  await rejects(() => w.argon2idUnwrapCek({ ...e.wrapped_cek, m: 8, t: 1 }, 'x'), 'out of range');
+  await rejects(() => w.argon2idUnwrapCek({ ...e.wrapped_cek, m: 19456, t: 1 }, 'x'), 'one pass');
+  await rejects(() => w.argon2idUnwrapCek({ ...e.wrapped_cek, m: 4194304 }, 'x'), 'out of range');
+  eq(JSON.stringify(w.argon2Params({ m: 19456, t: 2, p: 1 })), '{"m":19456,"t":2,"p":1}');
+  let msg = ''; try { w.argon2Params({ m: 8, t: 1, p: 1 }); } catch (err) { msg = err.message; }
+  assert(/out of range/.test(msg), 'argon2Params accepted m=8');
+});
+
+test('v1.4', 'argon2id passphrases are NFC-normalised (composed é == decomposed é)', async () => {
+  const cell = await w.cellCreate(mkFile('nfc', 'n.txt', 'text/plain'),
+    [{ method: 'argon2id', passphrase: 'café au lait sous la pluie', argon2: FAST_ARGON }]);
+  const res = await w.cellOpen(cell, async (r) => w.argon2idUnwrapCek(r.wrapped_cek, 'café au lait sous la pluie'));
+  eq(new TextDecoder().decode(res.bytes), 'nfc');
+});
+
+test('v1.4', 'an access map larger than the limit is refused before any key is tried', async () => {
+  const a = await ecdhPair('A');
+  const cell = await w.cellCreate(mkFile('x', 'x.txt', 'text/plain'), [a]);
+  cell.header.access_map = Array(257).fill(cell.header.access_map[0]);
+  let tried = 0;
+  await rejects(() => w.cellOpen(cell, async () => { tried++; return null; }), 'Too many');
+  eq(tried, 0);
+});
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
 

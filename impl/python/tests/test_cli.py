@@ -46,13 +46,15 @@ class TestCli(unittest.TestCase):
         code, output = self.run_cli("verify", str(cell))
         self.assertEqual(code, 0)
         self.assertIn("header_hash    ok", output)
-        self.assertIn("signature      valid", output)
+        # v1.4: the signature is inside the ciphertext; verify cannot see it
+        self.assertIn("signature      inside the encrypted payload", output)
 
         destination = self.tmp / "out"
         code, output = self.run_cli(
             "open", str(cell), "--key", f"{stem}.cdkey", "--out", f"{destination}/"
         )
         self.assertEqual(code, 0)
+        self.assertIn("signed by key", output)
         self.assertEqual((destination / "report.txt").read_text(), "confidential contents")
 
     def test_private_key_file_is_not_world_readable(self):

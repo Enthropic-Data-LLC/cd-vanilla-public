@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cellular-defense"
 version = "0.1.0"
-description = "Python implementation of the Cellular Defense .cell encrypted document format (spec v1.3)"
+description = "Python implementation of the Cellular Defense .cell encrypted document format (spec v1.4)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -17,7 +17,7 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Topic :: Security :: Cryptography",
 ]
-dependencies = ["cryptography>=42.0"]
+dependencies = ["cryptography>=42.0", "argon2-cffi>=21.2"]
 
 [project.urls]
 Specification = "https://github.com/sohocs509/cd-vanilla/blob/master/docs/SPEC.md"
