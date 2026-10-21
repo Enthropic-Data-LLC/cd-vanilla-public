@@ -3,7 +3,7 @@ name = "cellular-defense"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
-description = "Rust implementation of the Cellular Defense .cell encrypted document format (spec v1.3)"
+description = "Rust implementation of the Cellular Defense .cell encrypted document format (spec v1.4)"
 license = "Apache-2.0"
 keywords = ["encryption", "cell", "aes-gcm", "ecdh", "shamir"]
 categories = ["cryptography"]
@@ -15,6 +15,8 @@ p256 = { version = "0.13", features = ["ecdh", "ecdsa", "pkcs8"] }
 pkcs8 = { version = "0.10", features = ["alloc"] }
 hkdf = "0.12"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+argon2 = "0.5"
+unicode-normalization = "0.1"
 sha2 = "0.10"
 hmac = "0.12"
 base64 = "0.22"
