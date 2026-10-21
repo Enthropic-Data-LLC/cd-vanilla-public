@@ -1,9 +1,9 @@
 # cellular-defense (Java)
 
 A Java implementation of the Cellular Defense **`.cell`** encrypted document
-format, written from [`docs/SPEC.md`](../../docs/SPEC.md) v1.3.
+format, written from [`docs/SPEC.md`](../../docs/SPEC.md) v1.4.
 
-**No runtime dependencies.** JUnit is test-scope only. Requires JDK 17+
+**One runtime dependency since v1.4:** Bouncy Castle (`bcprov-jdk18on`), used only for Argon2id, which the JDK does not provide. JUnit is test-scope only. Requires JDK 17+
 (built and tested on 21).
 
 Apache-2.0, like the rest of `impl/` — see [`LICENSING.md`](../../LICENSING.md) §3.
@@ -140,13 +140,14 @@ java -jar target/cellular-defense-0.1.0.jar open report.cell --key alice.cdkey -
 
 | Area | Status |
 |---|---|
-| Seal / open v1.3 | ✅ |
+| Seal / open v1.4 (and v1.3 on request: `CreateOptions.version`) | ✅ |
 | Read v1.0, v1.1, v1.2 and legacy v2.x | ✅ version-gated per cell (§12) |
 | ECDH P-256 → HKDF-SHA256 → AES-KW | ✅ |
 | PBKDF2 (600k) access method | ✅ |
 | WebAuthn PRF access method | ⚠️ unwrap only — the PRF output must come from a CTAP2 layer; browser-only in practice |
 | Shamir M-of-N quorum over GF(256) | ✅ |
-| Canonical serialization, AAD binding, ECDSA `header_sig` | ✅ |
+| Canonical serialization, AAD binding (version in the AAD from v1.4), ECDSA sender signature (`header_sig` to v1.3; inside the manifest in v1.4) | ✅ |
+| v1.4: blind entries + trial decryption, Padmé padding, Argon2id (Bouncy Castle) | ✅ — all 41 conformance vectors |
 | `.cell` / `.celz` / `.cdpub` / `.cdkey` | ✅ |
 | Mitosis lineage (`prev_hash`) | ✅ via `CreateOptions.prevHash` |
 

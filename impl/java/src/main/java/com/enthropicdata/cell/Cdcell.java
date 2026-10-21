@@ -179,7 +179,7 @@ public final class Cdcell {
             if (!entered.equals(promptPassphrase("Repeat: "))) {
                 throw new CellException("passphrases do not match");
             }
-            recipients.add(Cell.Recipient.passphrase(entered, null));
+            recipients.add(Cell.Recipient.argon2id(entered, null));
         }
         if (recipients.isEmpty()) {
             throw new CellException("a cell needs at least one recipient (--to or --passphrase)");

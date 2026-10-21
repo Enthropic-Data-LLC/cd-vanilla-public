@@ -7,10 +7,10 @@ in all the others with byte-identical plaintext.
 | Language | Location | Licence | Dependencies | Encrypt / decrypt examples |
 |---|---|---|---|---|
 | **JavaScript** (reference) | [`../cell-crypto.js`](../cell-crypto.js) | AGPL-3.0 | none — Web Crypto | [root README](../README.md) |
-| **Python** | [`python/`](python) | Apache-2.0 | `cryptography` | [README](python/README.md#encrypt) |
-| **Go** | [`go/`](go) | Apache-2.0 | none | [README](go/README.md#encrypt) |
-| **Rust** | [`rust/`](rust) | Apache-2.0 | RustCrypto, `serde_json`, `flate2` | [README](rust/README.md#encrypt) |
-| **Java** | [`java/`](java) | Apache-2.0 | none at runtime | [README](java/README.md#encrypt) |
+| **Python** | [`python/`](python) | Apache-2.0 | `cryptography`, `argon2-cffi` | [README](python/README.md#encrypt) |
+| **Go** | [`go/`](go) | Apache-2.0 | `golang.org/x/crypto`, `golang.org/x/text` | [README](go/README.md#encrypt) |
+| **Rust** | [`rust/`](rust) | Apache-2.0 | RustCrypto (incl. `argon2`), `serde_json`, `flate2` | [README](rust/README.md#encrypt) |
+| **Java** | [`java/`](java) | Apache-2.0 | Bouncy Castle (Argon2id only) | [README](java/README.md#encrypt) |
 
 The JavaScript implementation lives at the repository root rather than under
 `impl/`, because it is not only a port: `index.html` loads it directly, it is the
@@ -30,7 +30,7 @@ them has been compiled and run verbatim.
   you hand an auditor who has no toolchain. Two pinned `golang.org/x` modules since v1.4 (Argon2id, NFC).
 - **Rust** — the route to a second *browser* implementation via WASM, and an FFI
   core other languages can bind rather than each re-porting Shamir.
-- **Java** — enterprise and Android integration. No runtime dependencies.
+- **Java** — enterprise and Android integration. One runtime dependency since v1.4 (Bouncy Castle, for Argon2id).
 
 ## What each language gives you, and what it costs
 

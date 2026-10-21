@@ -3,10 +3,11 @@
   SPDX-FileCopyrightText: 2026 Enthropic Data LLC
   SPDX-License-Identifier: Apache-2.0
 
-  No runtime dependencies. The JDK supplies every cryptographic primitive the
-  format needs — including AES-KW and IEEE P1363 signatures, which Go and
-  Python respectively had to work around — and the two gaps (HKDF before JDK 24,
-  and JSON, which the JDK has never had) are filled in this source tree.
+  One runtime dependency since format v1.4: Bouncy Castle's provider jar, used
+  only for Argon2id (the JDK has none). The JDK supplies every other primitive
+  the format needs — including AES-KW, NFC normalization and IEEE P1363
+  signatures — and the two remaining gaps (HKDF before JDK 24, and JSON, which
+  the JDK has never had) are filled in this source tree.
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -19,7 +20,7 @@
   <packaging>jar</packaging>
 
   <name>cellular-defense</name>
-  <description>Java implementation of the Cellular Defense .cell encrypted document format (spec v1.3)</description>
+  <description>Java implementation of the Cellular Defense .cell encrypted document format (spec v1.4)</description>
 
   <licenses>
     <license>
@@ -34,6 +35,11 @@
   </properties>
 
   <dependencies>
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcprov-jdk18on</artifactId>
+      <version>1.78.1</version>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

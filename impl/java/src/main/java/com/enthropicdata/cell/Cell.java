@@ -26,10 +26,10 @@ public final class Cell {
     private Cell() {}
 
     /** The version this library writes. */
-    public static final String CELL_FORMAT_VERSION = "1.3";
+    public static final String CELL_FORMAT_VERSION = "1.4";
 
     /** Versions this library can read (spec §12). */
-    public static final Set<String> SUPPORTED_VERSIONS = Set.of("1.0", "1.1", "1.2", "1.3");
+    public static final Set<String> SUPPORTED_VERSIONS = Set.of("1.0", "1.1", "1.2", "1.3", "1.4");
 
     /**
      * Versions whose hash/signature/AAD use the canonical serialization (§4.1.1).
@@ -39,10 +39,19 @@ public final class Cell {
      * test elsewhere silently drops canonicalization, or decrypts new cells with
      * no AAD, with no error raised at any point.
      */
-    public static final Set<String> CANONICAL_VERSIONS = Set.of("1.2", "1.3");
+    public static final Set<String> CANONICAL_VERSIONS = Set.of("1.2", "1.3", "1.4");
 
     /** Versions that bind metadata to the ciphertext as AES-GCM AAD (§4.4). */
-    public static final Set<String> AAD_VERSIONS = Set.of("1.1", "1.2", "1.3");
+    public static final Set<String> AAD_VERSIONS = Set.of("1.1", "1.2", "1.3", "1.4");
+
+    /** v1.4 features, each gated by its own set (same reasoning as above). */
+    public static final Set<String> VERSIONED_AAD_VERSIONS = Set.of("1.4");
+    public static final Set<String> PADDED_VERSIONS = Set.of("1.4");
+    public static final Set<String> INNER_SIG_VERSIONS = Set.of("1.4");
+    public static final Set<String> BLIND_ENTRY_VERSIONS = Set.of("1.4");
+
+    /** Openers refuse a larger access map before trying any key (§6). */
+    public static final int MAX_ACCESS_ENTRIES = 256;
 
     // ─── Serialization ──────────────────────────────────────────────────────
 
@@ -73,6 +82,16 @@ public final class Cell {
         if (!AAD_VERSIONS.contains(version)) {
             return null;
         }
+        if (VERSIONED_AAD_VERSIONS.contains(version)) {
+            // v1.4: an object that includes the version, so relabelling fails the tag.
+            Map<String, Object> o = new LinkedHashMap<>();
+            o.put("format", version);
+            o.put("prev_hash", header.get("prev_hash"));
+            o.put("threshold", header.get("threshold"));
+            o.put("lifetime", header.get("lifetime"));
+            o.put("policy", header.get("policy"));
+            return Canonical.canonicalBytes(o);
+        }
         List<Object> meta = new ArrayList<>(4);
         meta.add(header.get("prev_hash"));
         meta.add(header.get("threshold"));
@@ -88,6 +107,12 @@ public final class Cell {
 
     /** One access-map entry to be created. */
     public record Recipient(String method, String label, String spki, String passphrase) {
+
+        /** Wrap under a passphrase with Argon2id (v1.4 only). */
+        public static Recipient argon2id(String passphrase, String label) {
+            return new Recipient("argon2id", label == null || label.isEmpty() ? "Passphrase" : label,
+                    null, passphrase);
+        }
 
         /** Wrap for the holder of a P-256 public key (base64 SPKI). */
         public static Recipient ecdh(String spki, String label) {
@@ -107,16 +132,21 @@ public final class Cell {
     }
 
     private static Map<String, Object> wrapEntry(Recipient recipient, byte[] keyMaterial,
-            Integer shareIndex) {
+            Integer shareIndex, String version) {
+        boolean blind = BLIND_ENTRY_VERSIONS.contains(version);
         Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("label", recipient.label());
+        if (!blind) {
+            entry.put("label", recipient.label());
+        }
         entry.put("method", recipient.method());
 
         Map<String, Object> wrapped;
         switch (recipient.method()) {
             case "ecdh-p256" -> {
                 byte[] recipientDer = CellCrypto.decodeB64(recipient.spki(), "spki");
-                entry.put("fingerprint", CellCrypto.fingerprint(recipientDer));
+                if (!blind) {
+                    entry.put("fingerprint", CellCrypto.fingerprint(recipientDer));
+                }
                 PublicKey recipientKey = CellCrypto.parseSpki(recipientDer);
 
                 // A fresh ephemeral keypair per recipient per cell is what gives
@@ -143,7 +173,23 @@ public final class Cell {
                 // A passphrase has no public key, so §6.2 fingerprints the salt.
                 // It identifies the entry, not the holder, and proves nothing
                 // about who can open it.
-                entry.put("fingerprint", CellCrypto.fingerprint(salt));
+                if (!blind) {
+                    entry.put("fingerprint", CellCrypto.fingerprint(salt));
+                }
+            }
+            case "argon2id" -> {
+                if (!blind) {
+                    throw new CellException.Malformed("argon2id entries need format v1.4");
+                }
+                int[] pr = CellCrypto.ARGON2_DEFAULTS;
+                CellCrypto.argon2Check(pr[0], pr[1], pr[2]);
+                byte[] salt = CellCrypto.randomBytes(16);
+                byte[] kek = CellCrypto.argon2Key(recipient.passphrase(), salt, pr[0], pr[1], pr[2]);
+                wrapped = Json.of(
+                        "salt", CellCrypto.encodeB64(salt),
+                        "m", (double) pr[0], "t", (double) pr[1], "p", (double) pr[2],
+                        "ct", CellCrypto.encodeB64(CellCrypto.aesKeyWrap(kek, keyMaterial)));
+                CellCrypto.wipe(kek);
             }
             default -> throw new CellException.Malformed(
                     "unknown access method \"" + recipient.method() + "\"");
@@ -173,10 +219,33 @@ public final class Cell {
         public KeyRecord sender;
         public String docId;
         public Long createdAt;
+        /** Format version to write; null = {@link #CELL_FORMAT_VERSION}. Any from 1.2 on. */
+        public String version;
     }
 
     /**
-     * Seal {@code data} into a v1.3 cell.
+     * Bytes the v1.4 inner sender signature covers (§4.5): content, manifest, the
+     * authenticated metadata (with the version), the cell's identity and the
+     * intended key recipients.
+     */
+    public static byte[] senderSigInput(String version, Object docId, Object createdAt,
+            byte[] aad, Map<String, Object> manifest, byte[] content, String senderSpki,
+            List<Object> to) {
+        Map<String, Object> o = new LinkedHashMap<>();
+        o.put("purpose", "cell-sender-signature");
+        o.put("version", version);
+        o.put("doc_id", docId);
+        o.put("created_at", createdAt);
+        o.put("aad", new String(aad == null ? new byte[0] : aad, StandardCharsets.UTF_8));
+        o.put("manifest", manifest);
+        o.put("content_sha256", CellCrypto.encodeB64(CellCrypto.sha256(content)));
+        o.put("sender_spki", senderSpki);
+        o.put("to", to);
+        return Canonical.canonicalBytes(o);
+    }
+
+    /**
+     * Seal {@code data} into a cell (v1.4 unless {@code options.version} says otherwise).
      *
      * <p>A threshold above 1 splits the CEK into one Shamir share per recipient,
      * of which that many are needed (§7). {@code sender} adds a
@@ -190,6 +259,13 @@ public final class Cell {
             throw new CellException.Malformed("a cell needs at least one recipient");
         }
         CreateOptions opts = options == null ? new CreateOptions() : options;
+        String version = opts.version != null ? opts.version : CELL_FORMAT_VERSION;
+        if (!SUPPORTED_VERSIONS.contains(version) || !CANONICAL_VERSIONS.contains(version)) {
+            throw new CellException.Malformed("create writes v1.2 and later only, not \"" + version + "\"");
+        }
+        boolean innerSig = INNER_SIG_VERSIONS.contains(version);
+        String docId = opts.docId != null ? opts.docId : Ulid.generate();
+        long createdAt = opts.createdAt != null ? opts.createdAt : KeyRecord.now();
         int required = Math.max(1, Math.min(opts.threshold, recipients.size()));
         String contentType = opts.contentType == null || opts.contentType.isEmpty()
                 ? "application/octet-stream" : opts.contentType;
@@ -203,14 +279,6 @@ public final class Cell {
         if (opts.meta != null) {
             manifest.put("meta", opts.meta);
         }
-        byte[] manifestBytes = Canonical.jsStringify(manifest).getBytes(StandardCharsets.UTF_8);
-
-        byte[] plaintext = new byte[4 + manifestBytes.length + data.length];
-        ByteBuffer.wrap(plaintext).order(ByteOrder.LITTLE_ENDIAN).putInt(manifestBytes.length);
-        System.arraycopy(manifestBytes, 0, plaintext, 4, manifestBytes.length);
-        System.arraycopy(data, 0, plaintext, 4 + manifestBytes.length, data.length);
-        byte[] body = CellCrypto.gzipCompress(plaintext);
-
         byte[] cek = CellCrypto.randomBytes(CellCrypto.CEK_LENGTH);
         try {
             // Metadata is fixed before encryption precisely so it can be bound as AAD.
@@ -225,36 +293,72 @@ public final class Cell {
                     "watermark_mode", "none",
                     "created_on_origin", null,
                     "origin_sig", null));
+            byte[] aad = cellAad(header, version);
+
+            // v1.4: the signature is made before encryption and carried inside
+            // the manifest, so only someone who can open the cell learns who
+            // signed it.
+            if (innerSig && opts.sender != null) {
+                PrivateKey signingKey = opts.sender.privateKey();
+                if (signingKey == null) {
+                    throw new CellException.Malformed(
+                            "signing requires a key record with a private key");
+                }
+                List<String> fps = new ArrayList<>();
+                for (Recipient r : recipients) {
+                    if ("ecdh-p256".equals(r.method()) && r.spki() != null) {
+                        fps.add(CellCrypto.fingerprint(CellCrypto.decodeB64(r.spki(), "spki")));
+                    }
+                }
+                Collections.sort(fps);
+                List<Object> to = new ArrayList<>(fps);
+                byte[] input = senderSigInput(version, docId, (double) createdAt, aad,
+                        new LinkedHashMap<>(manifest), data, opts.sender.spki(), to);
+                manifest.put("sender", Json.of(
+                        "spki", opts.sender.spki(),
+                        "to", to,
+                        "sig", CellCrypto.encodeB64(CellCrypto.ecdsaSign(signingKey, input))));
+            }
+
+            byte[] manifestBytes = Canonical.jsStringify(manifest).getBytes(StandardCharsets.UTF_8);
+            byte[] plaintext = new byte[4 + manifestBytes.length + data.length];
+            ByteBuffer.wrap(plaintext).order(ByteOrder.LITTLE_ENDIAN).putInt(manifestBytes.length);
+            System.arraycopy(manifestBytes, 0, plaintext, 4, manifestBytes.length);
+            System.arraycopy(data, 0, plaintext, 4 + manifestBytes.length, data.length);
+            byte[] body = CellCrypto.gzipCompress(plaintext);
+            if (PADDED_VERSIONS.contains(version)) {
+                body = CellCrypto.padBody(body);
+            }
 
             byte[] iv = CellCrypto.randomBytes(CellCrypto.IV_LENGTH);
-            byte[] ciphertext = CellCrypto.aesGcmEncrypt(cek, iv, body,
-                    cellAad(header, CELL_FORMAT_VERSION));
+            byte[] ciphertext = CellCrypto.aesGcmEncrypt(cek, iv, body, aad);
 
             List<Object> accessMap = new ArrayList<>(recipients.size());
             if (required > 1) {
                 List<Gf256.Share> shares = Gf256.split(cek, recipients.size(), required, null);
                 for (int i = 0; i < recipients.size(); i++) {
-                    accessMap.add(wrapEntry(recipients.get(i), shares.get(i).data(), i + 1));
+                    accessMap.add(wrapEntry(recipients.get(i), shares.get(i).data(), i + 1, version));
                 }
             } else {
                 for (Recipient recipient : recipients) {
-                    accessMap.add(wrapEntry(recipient, cek, null));
+                    accessMap.add(wrapEntry(recipient, cek, null, version));
                 }
             }
             header.put("access_map", accessMap);
             header.put("payload_hash", CellCrypto.encodeB64(CellCrypto.sha256(ciphertext)));
 
-            byte[] headerBytes = serializeHeader(header, CELL_FORMAT_VERSION);
+            byte[] headerBytes = serializeHeader(header, version);
 
             Map<String, Object> cell = new LinkedHashMap<>();
-            cell.put("version", CELL_FORMAT_VERSION);
-            cell.put("doc_id", opts.docId != null ? opts.docId : Ulid.generate());
-            cell.put("created_at",
-                    (double) (opts.createdAt != null ? opts.createdAt : KeyRecord.now()));
+            cell.put("version", version);
+            cell.put("doc_id", docId);
+            cell.put("created_at", (double) createdAt);
             cell.put("header", header);
             cell.put("header_hash", CellCrypto.encodeB64(CellCrypto.sha256(headerBytes)));
 
-            if (opts.sender != null) {
+            if (innerSig) {
+                // v1.4 cells carry no header_sig fields at all (§4.1).
+            } else if (opts.sender != null) {
                 PrivateKey signingKey = opts.sender.privateKey();
                 if (signingKey == null) {
                     throw new CellException.Malformed(
@@ -272,7 +376,7 @@ public final class Cell {
 
             cell.put("payload", Json.of(
                     "alg", "AES-256-GCM",
-                    "encoding", "base64+gzip",
+                    "encoding", PADDED_VERSIONS.contains(version) ? "base64+gzip+padme" : "base64+gzip",
                     "iv", CellCrypto.encodeB64(iv),
                     "ciphertext", CellCrypto.encodeB64(ciphertext)));
             return cell;
@@ -320,6 +424,20 @@ public final class Cell {
         if (headerHash == null || headerHash.isEmpty()) {
             throw new CellException.Integrity("header_hash is missing");
         }
+        if (INNER_SIG_VERSIONS.contains(version)) {
+            for (String k : new String[] {"header_sig", "header_sig_key", "header_sig_by"}) {
+                String v = Json.string(cell, k);
+                if (v != null && !v.isEmpty()) {
+                    throw new CellException.Malformed("a v" + version
+                            + " cell carries its signature inside the payload — a header signature here is malformed");
+                }
+            }
+        }
+        List<Object> mapForLimit = Json.array(header, "access_map");
+        if (mapForLimit != null && mapForLimit.size() > MAX_ACCESS_ENTRIES) {
+            throw new CellException.Malformed(
+                    "too many access-map entries (> " + MAX_ACCESS_ENTRIES + ")");
+        }
         byte[] headerBytes = serializeHeader(header, version);
         if (!CellCrypto.encodeB64(CellCrypto.sha256(headerBytes)).equals(headerHash)) {
             throw new CellException.Integrity("header may be tampered");
@@ -362,7 +480,8 @@ public final class Cell {
             signerFingerprint = CellCrypto.fingerprint(spkiDer);
         }
 
-        if (expectedSigner != null) {
+        // v1.4 signatures are inside the payload; open() checks expectedSigner there.
+        if (expectedSigner != null && !INNER_SIG_VERSIONS.contains(version)) {
             if (!signed) {
                 throw new CellException.Signature("expected a cell signed by " + expectedSigner
                         + ", but it carries no signature (removal is undetectable — see spec §4.1)");
@@ -388,7 +507,9 @@ public final class Cell {
             boolean signed,
             String signerFingerprint,
             String claimedSigner,
-            Lifetime lifetime) {}
+            Lifetime lifetime,
+            /* v1.4: fingerprints of the key recipients the signer addressed (§4.5). */
+            List<String> signedTo) {}
 
     /** Key material and policy for {@link #open}. */
     public static final class OpenOptions {
@@ -526,6 +647,9 @@ public final class Cell {
             byte[] compressed = CellCrypto.aesGcmDecrypt(cek,
                     CellCrypto.decodeB64(ivB64, "iv"),
                     CellCrypto.decodeB64(ctB64, "ciphertext"), aad);
+            if (PADDED_VERSIONS.contains(version)) {
+                compressed = CellCrypto.unpadBody(compressed);
+            }
             plain = CellCrypto.gzipDecompress(compressed);
         } finally {
             CellCrypto.wipe(cek);
@@ -540,7 +664,7 @@ public final class Cell {
             return new OpenResult(plain,
                     orDefault(Json.string(cell, "original_filename"), "decrypted"),
                     orDefault(Json.string(cell, "content_type"), "application/octet-stream"),
-                    null, usedRecipient, signed, signerFingerprint, claimedSigner, lifetime);
+                    null, usedRecipient, signed, signerFingerprint, claimedSigner, lifetime, null);
         }
         if (plain.length < 4) {
             throw new CellException.Malformed("payload too short to hold a manifest length");
@@ -551,12 +675,54 @@ public final class Cell {
         }
         Map<String, Object> manifest =
                 Json.asObject(Json.parse(Arrays.copyOfRange(plain, 4, 4 + manifestLength)));
+        byte[] data = Arrays.copyOfRange(plain, 4 + manifestLength, plain.length);
+
+        // v1.4: the sender signature is inside the manifest, so it can only be
+        // checked now (§10 step 5).
+        List<String> signedTo = null;
+        if (INNER_SIG_VERSIONS.contains(version)) {
+            Object senderValue = manifest.get("sender");
+            if (senderValue != null) {
+                Map<String, Object> sender = Json.asObject(senderValue);
+                String spki = Json.string(sender, "spki");
+                String sig = Json.string(sender, "sig");
+                List<Object> to = Json.array(sender, "to");
+                if (spki == null || sig == null || to == null) {
+                    throw new CellException.Malformed("malformed sender signature");
+                }
+                Map<String, Object> unsigned = new LinkedHashMap<>(manifest);
+                unsigned.remove("sender");
+                byte[] aad = cellAad(header, version);
+                byte[] input = senderSigInput(version, cell.get("doc_id"), cell.get("created_at"),
+                        aad, unsigned, data, spki, to);
+                byte[] spkiDer = CellCrypto.decodeB64(spki, "sender.spki");
+                CellCrypto.ecdsaVerify(CellCrypto.parseSpki(spkiDer),
+                        CellCrypto.decodeB64(sig, "sender.sig"), input);
+                String fp = CellCrypto.fingerprint(spkiDer);
+                if (opts.expectedSigner != null && !opts.expectedSigner.equals(fp)) {
+                    throw new CellException.Signature("cell is signed by " + fp
+                            + ", not the expected " + opts.expectedSigner);
+                }
+                signed = true;
+                signerFingerprint = fp;
+                claimedSigner = null;
+                signedTo = new ArrayList<>();
+                for (Object o : to) {
+                    if (o instanceof String str) {
+                        signedTo.add(str);
+                    }
+                }
+            } else if (opts.expectedSigner != null) {
+                throw new CellException.Signature("expected a cell signed by "
+                        + opts.expectedSigner + ", but it carries no signature");
+            }
+        }
         return new OpenResult(
-                Arrays.copyOfRange(plain, 4 + manifestLength, plain.length),
+                data,
                 orDefault(Json.string(manifest, "filename"), "decrypted"),
                 orDefault(Json.string(manifest, "content_type"), "application/octet-stream"),
                 manifest.get("meta"), usedRecipient, signed, signerFingerprint, claimedSigner,
-                lifetime);
+                lifetime, signedTo);
     }
 
     /**
@@ -648,6 +814,30 @@ public final class Cell {
                         byte[] material = CellCrypto.aesKeyUnwrap(wrappingKey,
                                 CellCrypto.decodeB64(ct, "ct"));
                         CellCrypto.wipe(wrappingKey);
+                        return material;
+                    } catch (CellException e) {
+                        // try the next passphrase
+                    }
+                }
+                return null;
+            }
+            case "argon2id" -> {
+                for (String passphrase : opts.passphrases) {
+                    try {
+                        long m = Json.integer(wrapped, "m", -1);
+                        long t = Json.integer(wrapped, "t", -1);
+                        long p = Json.integer(wrapped, "p", -1);
+                        CellCrypto.argon2Check(m, t, p);
+                        byte[] salt = CellCrypto.decodeB64(
+                                orEmpty(Json.string(wrapped, "salt")), "salt");
+                        if (salt.length < 16) {
+                            throw new CellException.Malformed(
+                                    "Argon2id salt shorter than 16 bytes — refusing (§6.5)");
+                        }
+                        byte[] kek = CellCrypto.argon2Key(passphrase, salt, (int) m, (int) t, (int) p);
+                        byte[] material = CellCrypto.aesKeyUnwrap(kek,
+                                CellCrypto.decodeB64(ct, "ct"));
+                        CellCrypto.wipe(kek);
                         return material;
                     } catch (CellException e) {
                         // try the next passphrase
