@@ -144,11 +144,11 @@ Neither affects the priority claim, which is about what existed on 2026-07-18, n
 whether it was free of errors. The full list of corrections is the `1.3 (corrections)`
 row of the v1.3 changelog, and the reasoning is in `../../REVIEW-2026-08-09.md`.
 
-## v1.4 — stamped 2026-10-20 (PENDING)
+## v1.4 — anchored 2026-10-20, Bitcoin-confirmed 2026-10-21
 
 | File | SHA-256 | Bitcoin |
 |---|---|---|
-| `v1.4/SPEC.md` | `35d2883e 6c6e277b bb383139 cc7c48c7 c98bdaa2 8865158f 97e43079 300974f8` | pending |
-| `v1.4/cell-crypto.js` | `19f9fd04 f2d5db13 a6e5d855 433c9e13 8e4051dc ad2bb04f 04b63c85 da5d17c6` | pending |
+| `v1.4/SPEC.md` | `35d2883e 6c6e277b bb383139 cc7c48c7 c98bdaa2 8865158f 97e43079 300974f8` | 972397 |
+| `v1.4/cell-crypto.js` | `19f9fd04 f2d5db13 a6e5d855 433c9e13 8e4051dc ad2bb04f 04b63c85 da5d17c6` | 972397 |
 
-Source revision: tag `cell-format-v1.4-defensive-pub`.
+Source revision: tag `cell-format-v1.4-defensive-pub`. Block 972397: merkle root `3616ab4dc0b58b25a94f7d9d40129b90ea1bcd99284df921b12b1c2d41e1801b`, mined 2026-10-21 00:35:33 UTC (checked against the proof's computed root and a public explorer, 2026-10-21).
