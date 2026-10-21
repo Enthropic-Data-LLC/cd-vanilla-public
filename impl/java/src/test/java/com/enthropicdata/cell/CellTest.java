@@ -161,6 +161,7 @@ class CellTest {
         // hash is caught by the signature.
         Cell.CreateOptions opts = new Cell.CreateOptions();
         opts.sender = ALICE;
+        opts.version = "1.3"; // header signatures are a v1.3 construct
         Map<String, Object> cell = seal("x".getBytes(), List.of(Cell.Recipient.forKey(ALICE)), opts);
         Map<String, Object> other = seal("x".getBytes(), List.of(Cell.Recipient.forKey(BOB)), null);
         Json.object(cell, "header").put("access_map",
@@ -173,6 +174,7 @@ class CellTest {
     void signatureReportsTheRealFingerprint() {
         Cell.CreateOptions opts = new Cell.CreateOptions();
         opts.sender = BOB;
+        opts.version = "1.3"; // header signatures are a v1.3 construct
         Map<String, Object> cell = seal("x".getBytes(), List.of(Cell.Recipient.forKey(ALICE)), opts);
         Cell.OpenResult result = Cell.open(cell, keys(ALICE));
         assertTrue(result.signed());
@@ -184,6 +186,7 @@ class CellTest {
         // §4.1: a self-asserted label. Changing it must not change attribution.
         Cell.CreateOptions opts = new Cell.CreateOptions();
         opts.sender = BOB;
+        opts.version = "1.3"; // header signatures are a v1.3 construct
         Map<String, Object> cell = seal("x".getBytes(), List.of(Cell.Recipient.forKey(ALICE)), opts);
         cell.put("header_sig_by", "Trust Me Inc");
         rehash(cell);
@@ -199,6 +202,7 @@ class CellTest {
         // DER-defaulting implementation must still be refused.
         Cell.CreateOptions opts = new Cell.CreateOptions();
         opts.sender = BOB;
+        opts.version = "1.3"; // header signatures are a v1.3 construct
         Map<String, Object> cell = seal("x".getBytes(), List.of(Cell.Recipient.forKey(ALICE)), opts);
         byte[] raw = CellCrypto.decodeB64(Json.string(cell, "header_sig"), "sig");
         byte[] der = new byte[70];
@@ -221,6 +225,7 @@ class CellTest {
         // without error" is not evidence of authorship.
         Cell.CreateOptions opts = new Cell.CreateOptions();
         opts.sender = BOB;
+        opts.version = "1.3"; // header signatures are a v1.3 construct
         Map<String, Object> cell = seal("x".getBytes(), List.of(Cell.Recipient.forKey(ALICE)), opts);
         cell.put("header_sig", null);
         cell.put("header_sig_by", null);
@@ -339,6 +344,7 @@ class CellTest {
         }
         Cell.CreateOptions opts = new Cell.CreateOptions();
         opts.sender = ALICE;
+        opts.version = "1.3"; // header signatures are a v1.3 construct
         Map<String, Object> cell = seal(data, List.of(Cell.Recipient.forKey(ALICE)), opts);
         Map<String, Object> payload = Json.object(cell, "payload");
         for (String field : List.of(Json.string(payload, "ciphertext"), Json.string(payload, "iv"),
@@ -361,5 +367,101 @@ class CellTest {
         assertTrue(first.compareTo(second) < 0, "ULIDs must sort by creation time");
         assertNull(first.replaceAll("[0123456789ABCDEFGHJKMNPQRSTVWXYZ]", "").isEmpty()
                 ? null : "non-Crockford characters in " + first);
+    }
+
+    // ─── v1.4 ───────────────────────────────────────────────────────────────
+
+    @Test
+    void v14EntriesAreBlindAndFoundByTrial() {
+        KeyRecord carol = KeyRecord.generate("Carol");
+        Map<String, Object> cell = seal("for two".getBytes(),
+                List.of(Cell.Recipient.forKey(ALICE), Cell.Recipient.forKey(BOB)), null);
+        assertEquals("1.4", Json.string(cell, "version"));
+        for (Object e : Json.array(Json.object(cell, "header"), "access_map")) {
+            Map<String, Object> entry = Json.asObject(e);
+            assertFalse(entry.containsKey("fingerprint") || entry.containsKey("label"));
+        }
+        assertArrayEquals("for two".getBytes(), Cell.open(cell, keys(BOB)).data());
+        assertThrows(CellException.NoMatchingKey.class, () -> Cell.open(cell, keys(carol)));
+    }
+
+    @Test
+    void v14SignatureIsInsideThePayload() {
+        Cell.CreateOptions opts = new Cell.CreateOptions();
+        opts.sender = BOB;
+        Map<String, Object> cell = seal("signed".getBytes(), List.of(Cell.Recipient.forKey(ALICE)), opts);
+        assertFalse(cell.containsKey("header_sig") || cell.containsKey("header_sig_key"));
+        assertFalse(Json.writePretty(cell).contains(BOB.spki()));
+        Cell.OpenResult r = Cell.open(cell, keys(ALICE));
+        assertTrue(r.signed());
+        assertEquals(BOB.fingerprint(), r.signerFingerprint());
+        assertEquals(List.of(ALICE.fingerprint()), r.signedTo());
+
+        Map<String, Object> bad = seal("signed".getBytes(), List.of(Cell.Recipient.forKey(ALICE)), opts);
+        bad.put("header_sig", "AAAA");
+        assertThrows(CellException.Malformed.class, () -> Cell.open(bad, keys(ALICE)));
+
+        // created_at sits outside the AAD but inside the signed input.
+        Map<String, Object> tampered = seal("signed".getBytes(), List.of(Cell.Recipient.forKey(ALICE)), opts);
+        tampered.put("created_at", 1.0);
+        assertThrows(CellException.Signature.class, () -> Cell.open(tampered, keys(ALICE)));
+
+        Cell.OpenOptions expect = keys(ALICE);
+        expect.expectedSigner = ALICE.fingerprint();
+        assertThrows(CellException.Signature.class, () -> Cell.open(cell, expect));
+    }
+
+    @Test
+    void v14VersionIsAuthenticatedAndBodyIsPadded() {
+        Map<String, Object> cell = sealToAlice();
+        cell.put("version", "1.3");
+        rehash(cell);
+        assertThrows(CellException.Decryption.class, () -> Cell.open(cell, keys(ALICE)));
+        for (int n : new int[] {1, 10, 100}) {
+            Map<String, Object> c = seal(new byte[n], List.of(Cell.Recipient.forKey(ALICE)), null);
+            byte[] ct = CellCrypto.decodeB64(
+                    Json.string(Json.object(c, "payload"), "ciphertext"), "ct");
+            assertEquals(512 + 16, ct.length);
+        }
+        assertEquals(512, CellCrypto.padmeLength(512));
+        assertEquals(544, CellCrypto.padmeLength(513));
+        assertEquals(100352, CellCrypto.padmeLength(100000));
+    }
+
+    @Test
+    void v14Argon2idEntryAndBounds() {
+        Map<String, Object> cell = seal("secret".getBytes(),
+                List.of(Cell.Recipient.argon2id("correct horse", "")), null);
+        Cell.OpenOptions ok = new Cell.OpenOptions();
+        ok.passphrases = List.of("correct horse");
+        assertArrayEquals("secret".getBytes(), Cell.open(cell, ok).data());
+        Cell.OpenOptions wrong = new Cell.OpenOptions();
+        wrong.passphrases = List.of("battery staple");
+        assertThrows(CellException.NoMatchingKey.class, () -> Cell.open(cell, wrong));
+
+        assertThrows(CellException.Malformed.class, () -> CellCrypto.argon2Check(8, 1, 1));
+        assertThrows(CellException.Malformed.class, () -> CellCrypto.argon2Check(19456, 1, 1));
+        assertThrows(CellException.Malformed.class, () -> CellCrypto.argon2Check(2_000_000, 3, 4));
+
+        // NFC: composed and decomposed accents are one passphrase in v1.4.
+        Map<String, Object> nfc = seal("n".getBytes(),
+                List.of(Cell.Recipient.argon2id("caf\u00e9", "")), null);
+        Cell.OpenOptions decomposed = new Cell.OpenOptions();
+        decomposed.passphrases = List.of("cafe\u0301");
+        assertArrayEquals("n".getBytes(), Cell.open(nfc, decomposed).data());
+    }
+
+    @Test
+    void v14AccessMapLimit() {
+        Map<String, Object> cell = sealToAlice();
+        Map<String, Object> header = Json.object(cell, "header");
+        Object entry = Json.array(header, "access_map").get(0);
+        List<Object> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 257; i++) {
+            many.add(entry);
+        }
+        header.put("access_map", many);
+        rehash(cell);
+        assertThrows(CellException.Malformed.class, () -> Cell.open(cell, keys(ALICE)));
     }
 }
