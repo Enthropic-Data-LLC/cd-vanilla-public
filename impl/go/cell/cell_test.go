@@ -195,7 +195,7 @@ func TestIntegrityRefusals(t *testing.T) {
 
 	t.Run("forged access map caught by the signature", func(t *testing.T) {
 		c := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)},
-			cell.CreateOptions{Sender: alice})
+			cell.CreateOptions{Sender: alice, Version: "1.3"})
 		other := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(bob)}, cell.CreateOptions{})
 		c.GetObject("header").Set("access_map", other.GetObject("header").GetArray("access_map"))
 		rehash(t, c)
@@ -210,7 +210,7 @@ func TestSignatures(t *testing.T) {
 	opts := cell.OpenOptions{Keys: []*cell.KeyRecord{alice}}
 
 	t.Run("reports the real fingerprint", func(t *testing.T) {
-		c := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob})
+		c := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob, Version: "1.3"})
 		result, err := cell.Open(c, opts)
 		if err != nil {
 			t.Fatal(err)
@@ -222,7 +222,7 @@ func TestSignatures(t *testing.T) {
 
 	t.Run("header_sig_by is not trusted", func(t *testing.T) {
 		// §4.1: a self-asserted label. Changing it must not change attribution.
-		c := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob})
+		c := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob, Version: "1.3"})
 		c.Set("header_sig_by", "Trust Me Inc")
 		rehash(t, c)
 		result, err := cell.Open(c, opts)
@@ -240,7 +240,7 @@ func TestSignatures(t *testing.T) {
 	t.Run("DER-encoded signature is refused", func(t *testing.T) {
 		// §4.1's named trap: every general-purpose library produces DER by
 		// default, and DER in header_sig must not verify.
-		c := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob})
+		c := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob, Version: "1.3"})
 		raw, _ := cell.DecodeB64(c.GetString("header_sig"), "header_sig")
 		der := append([]byte{0x30, 0x44, 0x02, 0x20}, raw[:32]...)
 		der = append(der, 0x02, 0x20)
@@ -255,7 +255,7 @@ func TestSignatures(t *testing.T) {
 		// §4.1: an attacker can delete the signature and the result is
 		// byte-indistinguishable from a cell that was never signed. "Opened
 		// without error" is not evidence of authorship.
-		c := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob})
+		c := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob, Version: "1.3"})
 		for _, key := range []string{"header_sig", "header_sig_by", "header_sig_key"} {
 			c.Set(key, nil)
 		}
@@ -437,7 +437,7 @@ func TestEncoderEmitsStandardBase64(t *testing.T) {
 	for i := range data {
 		data[i] = byte(i)
 	}
-	c := seal(t, data, []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: alice})
+	c := seal(t, data, []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: alice, Version: "1.3"})
 	encoded, err := cell.MarshalCell(c)
 	if err != nil {
 		t.Fatal(err)
@@ -467,5 +467,113 @@ func TestDecoderToleratesBase64URL(t *testing.T) {
 	}
 	if !bytes.Equal(a, b) {
 		t.Fatal("base64url and standard base64 decoded differently")
+	}
+}
+
+// ─── v1.4 ───────────────────────────────────────────────────────────────────
+
+func TestV14BlindEntriesTrialDecryption(t *testing.T) {
+	alice, bob, carol := mustKey(t, "Alice"), mustKey(t, "Bob"), mustKey(t, "Carol")
+	c := seal(t, []byte("for two"), []cell.Recipient{cell.KeyRecipient(alice), cell.KeyRecipient(bob)}, cell.CreateOptions{})
+	if c.GetString("version") != "1.4" {
+		t.Fatalf("version = %s", c.GetString("version"))
+	}
+	for _, e := range c.GetObject("header").GetArray("access_map") {
+		entry := e.(*cell.Object)
+		if entry.Has("fingerprint") || entry.Has("label") {
+			t.Fatal("v1.4 entry is not blind")
+		}
+	}
+	r, err := cell.Open(c, cell.OpenOptions{Keys: []*cell.KeyRecord{bob}})
+	if err != nil || string(r.Data) != "for two" {
+		t.Fatalf("bob: %v", err)
+	}
+	if _, err := cell.Open(c, cell.OpenOptions{Keys: []*cell.KeyRecord{carol}}); !errors.Is(err, cell.ErrNoMatchingKey) {
+		t.Fatalf("carol: %v", err)
+	}
+}
+
+func TestV14InnerSignature(t *testing.T) {
+	alice, bob := mustKey(t, "Alice"), mustKey(t, "Bob")
+	c := seal(t, []byte("signed"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob})
+	if c.Has("header_sig") || c.Has("header_sig_key") {
+		t.Fatal("v1.4 cell carries a header signature")
+	}
+	r, err := cell.Open(c, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}})
+	if err != nil || !r.Signed || r.SignerFingerprint != bob.Fingerprint() {
+		t.Fatalf("open: %v signed=%v", err, r != nil && r.Signed)
+	}
+	if len(r.SignedTo) != 1 || r.SignedTo[0] != alice.Fingerprint() {
+		t.Fatalf("to = %v", r.SignedTo)
+	}
+	bad := seal(t, []byte("signed"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob})
+	bad.Set("header_sig", "AAAA")
+	if _, err := cell.Open(bad, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}}); !errors.Is(err, cell.ErrMalformed) {
+		t.Fatalf("header_sig on v1.4: %v", err)
+	}
+	// created_at sits outside the AAD but inside the signed input.
+	bad = seal(t, []byte("signed"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob})
+	bad.Set("created_at", float64(1))
+	if _, err := cell.Open(bad, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}}); !errors.Is(err, cell.ErrSignature) {
+		t.Fatalf("created_at edit: %v", err)
+	}
+	if _, err := cell.Open(c, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}, ExpectedSigner: alice.Fingerprint()}); !errors.Is(err, cell.ErrSignature) {
+		t.Fatalf("wrong expected signer: %v", err)
+	}
+}
+
+func TestV14VersionAuthenticatedAndPadded(t *testing.T) {
+	alice := mustKey(t, "Alice")
+	c := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{})
+	c.Set("version", "1.3")
+	rehash(t, c)
+	if _, err := cell.Open(c, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}}); !errors.Is(err, cell.ErrDecryption) {
+		t.Fatalf("relabelled: %v", err)
+	}
+	for _, n := range []int{1, 10, 100} {
+		p := seal(t, make([]byte, n), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{})
+		ct, _ := cell.DecodeB64(p.GetObject("payload").GetString("ciphertext"), "ct")
+		if len(ct) != 512+16 {
+			t.Fatalf("n=%d ciphertext = %d", n, len(ct))
+		}
+	}
+	if cell.PadmeLength(512) != 512 || cell.PadmeLength(513) != 544 || cell.PadmeLength(100000) != 100352 {
+		t.Fatal("padme values")
+	}
+}
+
+func TestV14Argon2id(t *testing.T) {
+	c := seal(t, []byte("secret"), []cell.Recipient{cell.Argon2idRecipient("correct horse", "")}, cell.CreateOptions{})
+	if r, err := cell.Open(c, cell.OpenOptions{Passphrases: []string{"correct horse"}}); err != nil || string(r.Data) != "secret" {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := cell.Open(c, cell.OpenOptions{Passphrases: []string{"battery staple"}}); !errors.Is(err, cell.ErrNoMatchingKey) {
+		t.Fatalf("wrong passphrase: %v", err)
+	}
+	for _, p := range [][3]int{{8, 1, 1}, {19456, 1, 1}, {2000000, 3, 4}} {
+		if cell.Argon2Check(p[0], p[1], p[2]) == nil {
+			t.Fatalf("params %v accepted", p)
+		}
+	}
+	// NFC: composed and decomposed accents are one passphrase in v1.4.
+	c = seal(t, []byte("n"), []cell.Recipient{cell.Argon2idRecipient("caf\u00e9", "")}, cell.CreateOptions{})
+	if _, err := cell.Open(c, cell.OpenOptions{Passphrases: []string{"cafe\u0301"}}); err != nil {
+		t.Fatalf("nfc: %v", err)
+	}
+}
+
+func TestV14AccessMapLimit(t *testing.T) {
+	alice := mustKey(t, "Alice")
+	c := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{})
+	hdr := c.GetObject("header")
+	entry := hdr.GetArray("access_map")[0]
+	many := make([]cell.Value, 257)
+	for i := range many {
+		many[i] = entry
+	}
+	hdr.Set("access_map", many)
+	rehash(t, c)
+	if _, err := cell.Open(c, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}}); !errors.Is(err, cell.ErrMalformed) {
+		t.Fatalf("257 entries: %v", err)
 	}
 }
