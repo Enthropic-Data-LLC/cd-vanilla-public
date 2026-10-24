@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Enthropic Data LLC -->
-<!-- SPDX-License-Identifier: LicenseRef-Enthropic-Proprietary -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -136,8 +136,8 @@ footer a:hover { color: #1a1a2e; }
 <div id="modal-overlay"></div>
 
 <footer>
-  <p>Copyright &copy; 2026 Enthropic Data LLC. All rights reserved.</p>
-  <p style="margin-top:0.25rem">Cell Format v1.0 &mdash; Proprietary software. Unauthorized use, reproduction, or distribution is prohibited.</p>
+  <p>Copyright &copy; 2026 Enthropic Data LLC. Code licensed AGPL-3.0; commercial licence available.</p>
+  <p style="margin-top:0.25rem">Cell Format v1.4 &mdash; the format is a defensive publication: free for anyone to implement, no patent asserted.</p>
 </footer>
 
 <script src="cell-crypto.js"></script>
@@ -415,7 +415,7 @@ async function renderEncrypt(app) {
               <option value="">— Unsigned —</option>
               ${signerKeys.map(k => `<option value="${k.keyId}">${esc(k.label)} · ${k.fingerprint}</option>`).join('')}
             </select>
-            <p class="hint" style="margin-top:0.25rem">ECDSA over header_hash. Recipient can verify sender identity.</p>
+            <p class="hint" style="margin-top:0.25rem">ECDSA, sealed inside the encryption: only a recipient can see who signed, and the signature covers the content and the intended recipients.</p>
           </div>
           <div class="field">
             <label>Copy protection</label>
@@ -722,8 +722,8 @@ async function renderOpen(app) {
             <div class="recipient-row">
               <span class="recipient-icon">${methodIcon(r.method)}</span>
               <div>
-                <div style="font-weight:600;font-size:0.9rem">${esc(r.label || r.method)}</div>
-                <div style="font-size:0.75rem;color:#888;font-family:monospace">${esc(methodLabel(r.method))} · ${esc(r.fingerprint||'')}${r.share_index != null ? ' · share #' + r.share_index : ''}</div>
+                <div style="font-weight:600;font-size:0.9rem">${esc(r.label || methodLabel(r.method))}</div>
+                <div style="font-size:0.75rem;color:#888;font-family:monospace">${r.fingerprint ? esc(methodLabel(r.method)) + ' · ' + esc(r.fingerprint) : 'no fingerprint, no label — found by trial decryption'}${r.share_index != null ? ' · share #' + r.share_index : ''}</div>
               </div>
             </div>`).join('')}
         </div>
@@ -771,6 +771,7 @@ async function openWithKeychain() {
   const keys = (await kcAll()).filter(k => k.method === 'ecdh-p256' && k.pkcs8);
   if (!keys.length) { showAlert('open-status', 'No ECDH private keys in keychain.', 'error'); return; }
   showAlert('open-status', '🔑 Trying keychain keys…', 'info');
+  let usedKey = null;  // v1.4 entries carry no label, so remember which of our keys unwrapped
   try {
     const result = await cellOpen(_openCell, async (r) => {
       if (r.method !== 'ecdh-p256') return null;
@@ -778,13 +779,15 @@ async function openWithKeychain() {
         if (r.fingerprint && r.fingerprint !== key.fingerprint) continue;
         try {
           const priv = await kcLoadPrivKey(key);
-          return await ecdhUnwrapCek(r.wrapped_cek, priv);
+          const cek = await ecdhUnwrapCek(r.wrapped_cek, priv);
+          usedKey = key;
+          return cek;
         } catch { continue; }
       }
       return null;
     });
     const sigNote = await sigNoteFor(result);
-    showAlert('open-status', `✅ Decrypted with "${esc(result.usedRecipient?.label || 'keychain key')}"${sigNote}`, 'success');
+    showAlert('open-status', `✅ Decrypted with "${esc(result.usedRecipient?.label || usedKey?.label || 'keychain key')}"${sigNote}`, 'success');
     dlBytes(result.bytes, result.filename, result.contentType);
     _showReencrypt(result);
   } catch (e) { showAlert('open-status', '❌ ' + e.message, 'error'); }
@@ -1198,58 +1201,57 @@ function renderAbout(app) {
       </table>
 
       <h3>Cell envelope (JSON)</h3>
-      <p style="color:#555;font-size:0.88rem;margin-bottom:0.75rem">Filename, MIME type, and size are inside the encrypted payload (spec §3.3) — invisible to any observer, server, or transit node.</p>
+      <p style="color:#555;font-size:0.88rem;margin-bottom:0.75rem">Filename, MIME type, and size are inside the encrypted payload (spec §5.1) — invisible to any observer, server, or transit node. From v1.4 the access map names no one: an entry has no fingerprint or label, and you find yours by trial decryption (spec §6). A signature, if any, is inside the ciphertext (spec §4.5).</p>
       <pre style="background:#f5f5f5;padding:1rem;border-radius:8px;font-size:0.78rem;overflow-x:auto;margin-bottom:1.5rem">{
-  "version": "1.2",
+  "version": "1.4",
   "doc_id": "&lt;ULID e.g. 01JXXXXXXXXXXXXXXXXXXXXXXXXX&gt;",
-  "created_at": 1716500000,
+  "created_at": 1780531200,
   "header": {
     "prev_hash": null,
     "threshold": { "required": 1, "of_total": 1 },
     "lifetime":  { "type": "permanent", "advisory": { "retain_until": null, "release_at": null, "single_use": false, "minimum_atl": 1 }, "disposal": { "at": null, "action": "none" } },
     "policy":    { "copy_protection": "standard", "watermark_mode": "none", "created_on_origin": "...", "origin_sig": null },
-    "payload_hash": "&lt;base64 SHA-256 of ciphertext&gt;",
     "access_map": [
       {
-        "fingerprint": "a1b2c3d4e5f6a7b8",
-        "label": "My Browser Key",
         "method": "ecdh-p256",
         "wrapped_cek": { "eph_spki": "...", "hkdf_salt": "...", "ct": "..." }
       }
-    ]
+    ],
+    "payload_hash": "&lt;base64 SHA-256 of ciphertext&gt;"
   },
-  "header_hash": "&lt;base64 SHA-256 of header JSON&gt;",
-  "header_sig": "&lt;base64 ECDSA-SHA256 over header JSON&gt; | null   (≤ v1.3; v1.4 signs inside the payload)",
+  "header_hash": "&lt;base64 SHA-256 of canonical header JSON&gt;",
   "payload": {
     "alg": "AES-256-GCM",
-    "encoding": "base64+gzip",
+    "encoding": "base64+gzip+padme",
     "iv":  "&lt;base64 12-byte IV&gt;",
-    "ciphertext": "&lt;base64 — gzip([4-byte manifest len][manifest JSON][file bytes])&gt;"
+    "ciphertext": "&lt;base64 — [LE32 len][gzip([4-byte len][manifest JSON][file bytes])][zero pad], encrypted&gt;"
   }
 }</pre>
 
       <h3>Key methods</h3>
       <table class="meta-table" style="margin-bottom:1.5rem">
         <tr><td>🔑 ECDH P-256</td><td>Generate a keypair in the browser. Private key stays in IndexedDB. Share your public key (.cdpub) with others.</td></tr>
-        <tr><td>💬 PBKDF2</td><td>Derive a key from a passphrase (SHA-256, 600K iterations). Simple. Share the passphrase out-of-band.</td></tr>
+        <tr><td>💬 Argon2id</td><td>Derive a key from a passphrase (RFC 9106; 64 MiB, 3 passes, 4 lanes). Share the passphrase out-of-band. Older PBKDF2 cells still open.</td></tr>
         <tr><td>🔐 YubiKey PRF</td><td>FIDO2 PRF extension — deterministic 32-byte key output. Requires HTTPS + YubiKey 5 series.</td></tr>
       </table>
 
       <h3>Crypto stack</h3>
-      <p style="line-height:1.7;color:#555">Content: <strong>AES-256-GCM</strong> with random 96-bit IV per cell. The header's advisory metadata (threshold, lifetime, policy, lineage) is bound to the ciphertext as GCM <strong>additional authenticated data</strong> (v1.2) — tampering with it fails the auth tag on open. Integrity hashes and signatures are computed over a <strong>canonical JSON</strong> form, so re-formatting the file (key order, whitespace) does not break verification.
+      <p style="line-height:1.7;color:#555">Content: <strong>AES-256-GCM</strong> with random 96-bit IV per cell. The format version and the header's advisory metadata (threshold, lifetime, policy, lineage) are bound to the ciphertext as GCM <strong>additional authenticated data</strong> — tampering with them, or relabelling the version, fails the auth tag on open. Integrity hashes and signatures are computed over a <strong>canonical JSON</strong> form, so re-formatting the file (key order, whitespace) does not break verification.
       CEK wrapping: ECDH P-256 ephemeral keypair → <strong>HKDF-SHA256</strong> (256-bit, random 32-byte salt, info <code>cellular-defense-cek-wrap-v1</code>) → <strong>AES-KW</strong>.
-      PBKDF2 with HMAC-SHA-256, 600,000 iterations, 256-bit salt.
+      Passphrases: <strong>Argon2id</strong> (RFC 9106, 16-byte salt, NFC-normalised passphrase) → AES-KW; PBKDF2-SHA256 (600,000 iterations) is still accepted on open.
       M-of-N quorum: <strong>Shamir Secret Sharing</strong> over GF(256) — CEK split into N shares; M shares required to reconstruct.
-      Tamper detection: <strong>payload_hash</strong> (SHA-256 of ciphertext) committed inside the header; <strong>header_hash</strong> (SHA-256 of header JSON) verified on open; optional <strong>header_sig</strong> (ECDSA-SHA256) for sender authenticity.
+      Size: the decrypted body is <strong>Padmé-padded</strong> (512-byte floor), so the ciphertext length shows a size bucket, not the exact size.
+      Tamper detection: <strong>payload_hash</strong> (SHA-256 of ciphertext) committed inside the header; <strong>header_hash</strong> (SHA-256 of canonical header JSON) verified on open; optional <strong>ECDSA P-256</strong> sender signature inside the encrypted manifest, covering the content, the cell's identity and the intended recipients.
       Lineage: <strong>prev_hash</strong> links a re-encrypted cell (Mitosis) back to its predecessor — creating an auditable chain of custody.
-      All cryptography uses the browser's <strong>WebCrypto API</strong> — no libraries, no server round-trips.</p>
+      Everything except Argon2id and BLAKE2b uses the browser's <strong>WebCrypto API</strong>; those two are plain JavaScript in <code>cell-crypto.js</code>, checked against the RFC test vectors. No server round-trips.</p>
     </div>
 
     <div class="card" style="max-width:680px">
       <h3>License &amp; Copyright</h3>
-      <p style="line-height:1.7;margin-bottom:1rem">Copyright &copy; 2026 <strong>Enthropic Data LLC</strong>. All rights reserved.</p>
-      <p style="line-height:1.7;margin-bottom:1rem;color:#555">This software is proprietary and confidential. No part of this application — including its source code, cryptographic format specification, or associated documentation — may be reproduced, distributed, or transmitted in any form or by any means without the prior written permission of Enthropic Data LLC.</p>
-      <p style="line-height:1.7;color:#555"><strong>Third-party components:</strong> None. Cell Format uses only the browser's built-in WebCrypto API (W3C Web Cryptography API, <a href="https://www.w3.org/TR/WebCryptoAPI/" target="_blank" rel="noopener noreferrer">W3C Recommendation</a>) and standard browser APIs. No external libraries are bundled or loaded.</p>
+      <p style="line-height:1.7;margin-bottom:1rem">Copyright &copy; 2026 <strong>Enthropic Data LLC</strong>.</p>
+      <p style="line-height:1.7;margin-bottom:1rem;color:#555"><strong>The format</strong> (<code>docs/SPEC.md</code>) is a defensive publication: anyone may implement it, for any purpose, without licence or royalty. No patent is sought or asserted.<br>
+      <strong>This code</strong> is licensed under the GNU AGPL-3.0; a commercial licence is available for products that cannot meet its terms. The ports in <code>impl/</code> and the conformance suite are Apache-2.0. See <code>LICENSING.md</code>.</p>
+      <p style="line-height:1.7;color:#555"><strong>Third-party components:</strong> None. Cell Format uses the browser's built-in WebCrypto API (W3C Web Cryptography API, <a href="https://www.w3.org/TR/WebCryptoAPI/" target="_blank" rel="noopener noreferrer">W3C Recommendation</a>) and standard browser APIs. No external libraries are bundled or loaded.</p>
     </div>`;
 }
 
