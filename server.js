@@ -26,10 +26,15 @@ const MIME = {
 // Resolve a request to a file inside this directory, or null. The decoded path
 // is resolved and then checked against the root: path.join alone follows "..",
 // which would serve any file the process can read. Dotfiles are refused too.
+// A decoded path containing a NUL byte is refused outright: fs.readFile throws
+// that case synchronously (ERR_INVALID_ARG_VALUE) before any error callback
+// runs, which with no surrounding try/catch took the whole process down on a
+// single unauthenticated request (found in pen test, 2026-10-31).
 function resolveRequest(rawUrl) {
   let urlPath;
   try { urlPath = decodeURIComponent(new URL(rawUrl, 'http://x').pathname); }
   catch { return null; }
+  if (urlPath.includes('\0')) return null;
   if (urlPath === '/') urlPath = '/index.html';
   const filePath = path.resolve(__dirname, '.' + urlPath);
   if (!filePath.startsWith(__dirname + path.sep)) return null;
@@ -38,6 +43,18 @@ function resolveRequest(rawUrl) {
 }
 
 function handler(req, res) {
+  try {
+    handleRequest(req, res);
+  } catch {
+    // Defense in depth: resolveRequest/fs.readFile reject the inputs we know
+    // about, but a single unhandled throw here would otherwise take down
+    // every request this process serves, not just the bad one.
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    res.end('Bad request');
+  }
+}
+
+function handleRequest(req, res) {
   const filePath = resolveRequest(req.url);
   if (!filePath) {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
