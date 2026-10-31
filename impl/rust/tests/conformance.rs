@@ -62,6 +62,7 @@ fn matches_reason(err: &Error, reason: &str) -> bool {
             | ("header-hash-mismatch", Error::Integrity(_))
             | ("payload-hash-mismatch", Error::Integrity(_))
             | ("signature-invalid", Error::Signature(_))
+            | ("signature-invalid", Error::SenderSignature(_))
             | ("signature-der-encoded", Error::Malformed(_))
             | ("aad-mismatch", Error::Decryption)
             | ("unsupported-version", Error::UnsupportedVersion(_))

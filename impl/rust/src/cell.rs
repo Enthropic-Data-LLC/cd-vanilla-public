@@ -627,7 +627,8 @@ pub fn open(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
                 if let Some(release_at) = lt.release_at {
                     if release_at > now {
                         return Err(Error::Lifetime(format!(
-                            "timed release — unlocks {release_at}"
+                            "timed release — unlocks {}",
+                            crate::error::format_unix_utc(release_at)
                         )));
                     }
                 }
@@ -635,7 +636,8 @@ pub fn open(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
             if let Some(retain_until) = lt.retain_until {
                 if retain_until < now {
                     return Err(Error::Lifetime(format!(
-                        "retention period ended {retain_until}"
+                        "retention period ended {}",
+                        crate::error::format_unix_utc(retain_until)
                     )));
                 }
             }
@@ -817,11 +819,15 @@ pub fn open(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
                     to,
                 )?;
                 let public = crypto::parse_spki(&spki_der)?;
-                crypto::ecdsa_verify(&public, &crypto::decode_b64(sig, "sender.sig")?, &input)?;
+                crypto::ecdsa_verify(&public, &crypto::decode_b64(sig, "sender.sig")?, &input)
+                    .map_err(|e| match e {
+                        Error::Signature(m) => Error::SenderSignature(m),
+                        other => other,
+                    })?;
                 let fp = crypto::fingerprint(&spki_der);
                 if let Some(expected) = opts.expected_signer.as_deref() {
                     if fp != expected {
-                        return Err(Error::Signature(format!(
+                        return Err(Error::SenderSignature(format!(
                             "cell is signed by {fp}, not the expected {expected}"
                         )));
                     }
@@ -836,7 +842,7 @@ pub fn open(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
             }
             None => {
                 if let Some(expected) = opts.expected_signer.as_deref() {
-                    return Err(Error::Signature(format!(
+                    return Err(Error::SenderSignature(format!(
                         "expected a cell signed by {expected}, but it carries no signature"
                     )));
                 }

@@ -366,12 +366,12 @@ fn v14_signature_is_inside_the_payload() {
     // created_at sits outside the AAD but inside the signed input.
     let mut bad = cell.clone();
     bad["created_at"] = json!(1);
-    assert!(matches!(open(&bad, &keys_for(&[&alice])), Err(Error::Signature(_))));
+    assert!(matches!(open(&bad, &keys_for(&[&alice])), Err(Error::SenderSignature(_))));
 
     // expected_signer is checked against the recomputed fingerprint.
     let mut opts = keys_for(&[&alice]);
     opts.expected_signer = Some(alice.fingerprint().unwrap());
-    assert!(matches!(open(&cell, &opts), Err(Error::Signature(_))));
+    assert!(matches!(open(&cell, &opts), Err(Error::SenderSignature(_))));
 }
 
 #[test]

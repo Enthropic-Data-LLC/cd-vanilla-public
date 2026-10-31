@@ -421,19 +421,35 @@ func ECDSASign(private *ecdsa.PrivateKey, data []byte) ([]byte, error) {
 	return out, nil
 }
 
-// ECDSAVerify verifies a raw 64-byte r||s signature. A DER signature is
+// ECDSAVerify verifies a raw 64-byte r||s header_sig. A DER signature is
 // refused outright rather than being decoded as a courtesy: accepting DER here
 // would interoperate with nothing and hide the bug until a browser saw the cell.
 func ECDSAVerify(public *ecdsa.PublicKey, rawSig, data []byte) error {
+	return ecdsaVerifyNamed(public, rawSig, data, "header_sig", ErrSignature)
+}
+
+// ECDSAVerifySender verifies the v1.4 inner sender.sig (spec §4.5) — the same
+// check as ECDSAVerify, but reported through ErrSenderSignature rather than
+// ErrSignature: a v1.4 cell carries no header_sig at all, and before this
+// split a failure here was reported as "header signature invalid", which sent
+// readers to the wrong field name and the wrong spec section.
+func ECDSAVerifySender(public *ecdsa.PublicKey, rawSig, data []byte) error {
+	return ecdsaVerifyNamed(public, rawSig, data, "sender.sig", ErrSenderSignature)
+}
+
+func ecdsaVerifyNamed(public *ecdsa.PublicKey, rawSig, data []byte, field string, sentinel error) error {
 	if len(rawSig) != 64 {
-		return fmt.Errorf("%w: header_sig must be 64 bytes of raw r||s (IEEE P1363), got %d; "+
-			"a DER-encoded signature is not accepted (spec §4.1)", ErrMalformed, len(rawSig))
+		return fmt.Errorf("%w: %s must be 64 bytes of raw r||s (IEEE P1363), got %d; "+
+			"a DER-encoded signature is not accepted (spec §4.1)", ErrMalformed, field, len(rawSig))
 	}
 	digest := sha256.Sum256(data)
 	r := new(big.Int).SetBytes(rawSig[:32])
 	s := new(big.Int).SetBytes(rawSig[32:])
 	if !ecdsa.Verify(public, digest[:], r, s) {
-		return fmt.Errorf("%w: cell may be forged", ErrSignature)
+		if sentinel == ErrSenderSignature {
+			return senderSignatureError("sender signature invalid: cell may be forged")
+		}
+		return fmt.Errorf("%w: cell may be forged", sentinel)
 	}
 	return nil
 }

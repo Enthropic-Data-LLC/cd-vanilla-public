@@ -514,10 +514,10 @@ func TestV14InnerSignature(t *testing.T) {
 	// created_at sits outside the AAD but inside the signed input.
 	bad = seal(t, []byte("signed"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob})
 	bad.Set("created_at", float64(1))
-	if _, err := cell.Open(bad, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}}); !errors.Is(err, cell.ErrSignature) {
+	if _, err := cell.Open(bad, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}}); !errors.Is(err, cell.ErrSenderSignature) {
 		t.Fatalf("created_at edit: %v", err)
 	}
-	if _, err := cell.Open(c, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}, ExpectedSigner: alice.Fingerprint()}); !errors.Is(err, cell.ErrSignature) {
+	if _, err := cell.Open(c, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}, ExpectedSigner: alice.Fingerprint()}); !errors.Is(err, cell.ErrSenderSignature) {
 		t.Fatalf("wrong expected signer: %v", err)
 	}
 }

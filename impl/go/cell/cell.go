@@ -820,12 +820,12 @@ func Open(c *Object, opts OpenOptions) (*OpenResult, error) {
 			if err != nil {
 				return nil, err
 			}
-			if err := ECDSAVerify(public, rawSig, input); err != nil {
+			if err := ECDSAVerifySender(public, rawSig, input); err != nil {
 				return nil, err
 			}
 			fp := Fingerprint(spkiDER)
 			if opts.ExpectedSigner != "" && fp != opts.ExpectedSigner {
-				return nil, fmt.Errorf("%w: cell is signed by %s, not the expected %s", ErrSignature, fp, opts.ExpectedSigner)
+				return nil, fmt.Errorf("%w: cell is signed by %s, not the expected %s", ErrSenderSignature, fp, opts.ExpectedSigner)
 			}
 			result.Signed = true
 			result.SignerFingerprint = fp
@@ -836,7 +836,7 @@ func Open(c *Object, opts OpenOptions) (*OpenResult, error) {
 				}
 			}
 		} else if opts.ExpectedSigner != "" {
-			return nil, fmt.Errorf("%w: expected a cell signed by %s, but it carries no signature", ErrSignature, opts.ExpectedSigner)
+			return nil, fmt.Errorf("%w: expected a cell signed by %s, but it carries no signature", ErrSenderSignature, opts.ExpectedSigner)
 		}
 	}
 	return result, nil
