@@ -1,0 +1,49 @@
+{
+  "version": "1.4",
+  "doc_id": "01M4XTHY328M4NRSYWS9YQCYQ8",
+  "created_at": 1787500001,
+  "header": {
+    "prev_hash": null,
+    "threshold": {
+      "required": 1,
+      "of_total": 1
+    },
+    "lifetime": {
+      "type": "permanent",
+      "advisory": {
+        "retain_until": null,
+        "release_at": null,
+        "single_use": false,
+        "minimum_atl": 1
+      },
+      "disposal": {
+        "at": null,
+        "action": "none"
+      }
+    },
+    "policy": {
+      "copy_protection": "standard",
+      "watermark_mode": "none",
+      "created_on_origin": null,
+      "origin_sig": null
+    },
+    "access_map": [
+      {
+        "method": "ecdh-p256",
+        "wrapped_cek": {
+          "eph_spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+eeI3bIVYWNAjgOWUm8ZHN9bfh2mUUZglmHUH4KmYTZgrNs0khZNQ/oRVqc5JflvCNMNqZs3id3F5lRTtxerQg==",
+          "hkdf_salt": "64it3U1lLKJxl1DaKrYCN0MhMck05tZYh5//X/9Kf24=",
+          "ct": "kY9mULQVyWLzo+uYAhekn2UIz1qGf3LfatE4liATzY9n1lIuovyrEg=="
+        }
+      }
+    ],
+    "payload_hash": "ilqklE1fM5EMIUI3HLAvXVihWoTuyezfgMU68mTaxYI="
+  },
+  "header_hash": "/aveMZSYi5Jt98PmmrfuhWGq6fb5c4r4EawU/BndgQQ=",
+  "payload": {
+    "alg": "AES-256-GCM",
+    "encoding": "base64+gzip+padme",
+    "iv": "EdvXfxQI+M0+WnRz",
+    "ciphertext": "YdXvdHPEr4OXwbyEkfqItLNcodlmBOIImBLpe/vLv2kAEhONd4wAKQrfQYDX3/lPXjUKZhH4zc02fclrpFUm3FPRh0yCFYuO1UYEiKzj4/pHRUX+xU+foSLG69BMvOQOnFa/ynTKgWzRWEUnr4nyeYQNCxr3xZpQyxo8ksjpA0mHncf8dGH/CYpEoZQquNlc4eXTvkmCr/CmXxMNSTzThf5UqQzXzdGnxLoCoLwlp//yNx5kLIqYqP0FeIODaOKRQEPgz1jdeN8lrn1ZxkDjZV/4nDbFP7g3NomX75/ZFw0wfP3qaZv4wcPBfgkRpufe5tDZ4UdJYfFWxVERBPDIZvDWP4dF0ES1mkZMp1mLCvt7QAPgw8Mx6fwJwQaCmIlz2TtReXSodn/v9TCV5UvTGk8I0zotRz4/gX+G/ReU3fO5/JMPZDJQvIFeYQntSUgNIAvJcZAZprDSGvP2jJF92pyR4FEMNe+OUIqWUrZtFrYJua/+oblpZE9yqXCvTWU+xCYM2NHNktn4DhX2o483oTtFYXJUy3eKZtHF2DH4nsPGbdBXCCNKYWDpij47rk47SUCFCZ9YhFd1vFJQ91Ai/0LX85dGwtHotq+Vzssc8wjhKbgBu0ivXk/Ji6tXNpThF3JYNBtmDgM3ZXzZO2R6j7xMnvkiT9VPef5FvjL+1A8B+pPR8R+8hlwU0cpcsIVb"
+  }
+}

@@ -21,6 +21,10 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"math/bits"
+
+	"golang.org/x/crypto/argon2"
+	"golang.org/x/text/unicode/norm"
 )
 
 // Cryptographic primitives — spec §6, §14.
@@ -164,6 +168,9 @@ func AESGCMDecrypt(cek, iv, ciphertext, aad []byte) ([]byte, error) {
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
+	}
+	if len(iv) != aead.NonceSize() {
+		return nil, fmt.Errorf("%w: IV is not %d bytes", ErrDecryption, aead.NonceSize())
 	}
 	plaintext, err := aead.Open(nil, iv, ciphertext, aad)
 	if err != nil {
@@ -429,4 +436,142 @@ func ECDSAVerify(public *ecdsa.PublicKey, rawSig, data []byte) error {
 		return fmt.Errorf("%w: cell may be forged", ErrSignature)
 	}
 	return nil
+}
+
+// ─── CEK wrapping — Argon2id, spec §6.5 (v1.4) ──────────────────────────────
+
+// Argon2Defaults are written by default: RFC 9106 §4's second recommended option.
+var Argon2Defaults = [3]int{65536, 3, 4} // m (KiB), t, p
+
+const (
+	argon2MMin        = 19456
+	argon2MMax        = 1048576
+	argon2OnePassMinM = 47104
+)
+
+// Argon2Check refuses parameters outside the bounds of §6.5, exactly as the
+// reference does: below the floor the passphrase is barely protected; above the
+// ceiling a hostile cell can exhaust the opener's memory or time.
+func Argon2Check(m, t, p int) error {
+	if m < argon2MMin || m > argon2MMax || t < 1 || t > 16 || p < 1 || p > 16 {
+		return fmt.Errorf("%w: Argon2id parameters out of range — refusing (§6.5)", ErrMalformed)
+	}
+	if t == 1 && m < argon2OnePassMinM {
+		return fmt.Errorf("%w: Argon2id with one pass needs at least 46 MiB — refusing (§6.5)", ErrMalformed)
+	}
+	return nil
+}
+
+// argon2Key is Argon2id v0x13, 32-byte tag, over the UTF-8 of the passphrase's
+// NFC form. Unlike PBKDF2 entries (§6.2), v1.4 normalizes: a passphrase typed
+// with a composed é on one machine and a decomposed é on another is one
+// passphrase.
+func argon2Key(passphrase string, salt []byte, m, t, p int) []byte {
+	return argon2.IDKey([]byte(norm.NFC.String(passphrase)), salt, uint32(t), uint32(m), uint8(p), 32)
+}
+
+// Argon2idWrapCEK wraps key material under an Argon2id-derived key. params is
+// (m, t, p) or nil for the defaults.
+func Argon2idWrapCEK(keyMaterial []byte, passphrase string, params *[3]int, salt []byte) (*Object, error) {
+	pr := Argon2Defaults
+	if params != nil {
+		pr = *params
+	}
+	if err := Argon2Check(pr[0], pr[1], pr[2]); err != nil {
+		return nil, err
+	}
+	if salt == nil {
+		salt = make([]byte, 16)
+		if _, err := rand.Read(salt); err != nil {
+			return nil, err
+		}
+	}
+	wrapped, err := AESKeyWrap(argon2Key(passphrase, salt, pr[0], pr[1], pr[2]), keyMaterial)
+	if err != nil {
+		return nil, err
+	}
+	out := NewObject()
+	out.Set("salt", EncodeB64(salt))
+	out.Set("m", float64(pr[0]))
+	out.Set("t", float64(pr[1]))
+	out.Set("p", float64(pr[2]))
+	out.Set("ct", EncodeB64(wrapped))
+	return out, nil
+}
+
+// Argon2idUnwrapCEK unwraps an Argon2id entry's wrapped_cek object.
+func Argon2idUnwrapCEK(wrapped *Object, passphrase string) ([]byte, error) {
+	num := func(k string) (int, bool) {
+		v, ok := wrapped.Get(k)
+		f, isNum := v.(float64)
+		if !ok || !isNum || f != float64(int(f)) {
+			return 0, false
+		}
+		return int(f), true
+	}
+	m, okM := num("m")
+	t, okT := num("t")
+	p, okP := num("p")
+	if !okM || !okT || !okP {
+		return nil, fmt.Errorf("%w: Argon2id parameters out of range — refusing (§6.5)", ErrMalformed)
+	}
+	if err := Argon2Check(m, t, p); err != nil {
+		return nil, err
+	}
+	salt, err := DecodeB64(wrapped.GetString("salt"), "salt")
+	if err != nil {
+		return nil, err
+	}
+	if len(salt) < 16 {
+		return nil, fmt.Errorf("%w: Argon2id salt shorter than 16 bytes — refusing (§6.5)", ErrMalformed)
+	}
+	ct, err := DecodeB64(wrapped.GetString("ct"), "ct")
+	if err != nil {
+		return nil, err
+	}
+	return AESKeyUnwrap(argon2Key(passphrase, salt, m, t, p), ct)
+}
+
+// ─── Padding — Padmé, spec §5.4 (v1.4) ──────────────────────────────────────
+
+const padFloor = 512
+
+// PadmeLength is Padmé (Nikitin et al., PETS 2019) with a 512-byte floor.
+func PadmeLength(n int) int {
+	if n <= padFloor {
+		return padFloor
+	}
+	e := bits.Len(uint(n)) - 1 // floor(log2 n), exact for integers
+	s := bits.Len(uint(e))     // floor(log2 e) + 1
+	step := 1 << (e - s)
+	return (n + step - 1) / step * step
+}
+
+// PadBody is LE32(len(gz)) || gz || zeros up to PadmeLength(4 + len(gz)).
+func PadBody(gz []byte) ([]byte, error) {
+	if uint64(len(gz)) >= 1<<32 {
+		return nil, fmt.Errorf("%w: body of 2^32 bytes or more is out of scope", ErrMalformed)
+	}
+	out := make([]byte, PadmeLength(4+len(gz)))
+	out[0], out[1], out[2], out[3] = byte(len(gz)), byte(len(gz)>>8), byte(len(gz)>>16), byte(len(gz)>>24)
+	copy(out[4:], gz)
+	return out, nil
+}
+
+// UnpadBody inverts PadBody: it rejects a length that runs past the end or any
+// non-zero padding byte.
+func UnpadBody(body []byte) ([]byte, error) {
+	if len(body) < 4 {
+		return nil, fmt.Errorf("%w: malformed padded body", ErrMalformed)
+	}
+	n := int(uint32(body[0]) | uint32(body[1])<<8 | uint32(body[2])<<16 | uint32(body[3])<<24)
+	if n < 0 || 4+n > len(body) {
+		return nil, fmt.Errorf("%w: malformed padded body — length exceeds body", ErrMalformed)
+	}
+	for _, b := range body[4+n:] {
+		if b != 0 {
+			return nil, fmt.Errorf("%w: malformed padded body — non-zero padding", ErrMalformed)
+		}
+	}
+	return body[4 : 4+n], nil
 }

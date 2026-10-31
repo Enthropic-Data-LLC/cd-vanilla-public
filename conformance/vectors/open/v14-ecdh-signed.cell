@@ -1,0 +1,49 @@
+{
+  "version": "1.4",
+  "doc_id": "01M4XTHXSNVGZNZ68ZYMWPBQPY",
+  "created_at": 1787500000,
+  "header": {
+    "prev_hash": null,
+    "threshold": {
+      "required": 1,
+      "of_total": 1
+    },
+    "lifetime": {
+      "type": "permanent",
+      "advisory": {
+        "retain_until": null,
+        "release_at": null,
+        "single_use": false,
+        "minimum_atl": 1
+      },
+      "disposal": {
+        "at": null,
+        "action": "none"
+      }
+    },
+    "policy": {
+      "copy_protection": "standard",
+      "watermark_mode": "none",
+      "created_on_origin": null,
+      "origin_sig": null
+    },
+    "access_map": [
+      {
+        "method": "ecdh-p256",
+        "wrapped_cek": {
+          "eph_spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECIXTOflakMfH9ix2QdU+tl8nR59TWyGAPM6nbHBT+F2Goed59xhuqIUWBHXtaP2xaHC1+1YDsvrphE/CpIb9VA==",
+          "hkdf_salt": "lecvNxUMpaQCHRPcnAxO6dhHBqyG2PDtut05K2KDBYk=",
+          "ct": "/gwulTSNcuwLm6dxBBcgTmHHXC0O2+JzqaCPf7rBCosrwGnNtwweZQ=="
+        }
+      }
+    ],
+    "payload_hash": "u9qImegP58i2tS2lk+YV2rJ/ed57qGxLXaWXIEmd2wo="
+  },
+  "header_hash": "n8x5Zurv21s/JbS/vzDoS+WA0Enicym1bmPLO98vjNM=",
+  "payload": {
+    "alg": "AES-256-GCM",
+    "encoding": "base64+gzip+padme",
+    "iv": "qOHbMQ+vbKJRLQr1",
+    "ciphertext": "HmjfkwqDtZN0HpQWkseDsedmBfnE/FoOoAAs0PayxlvgZSWNvYQuvLQT5m2yYW/GX39O6eCBVegvMW5VMFMJelVLXPKB+VpTjsvZIN3P7MC1KpBFKB3/t0o0eN/d9MklxGQ/rr9H3JNZEWCGfqCI2tm3Rh3EuYNmfQSpQkpMvUF/z9Az4eR61X8WmziPm1mwzR3MDRMq6Ju/awr19cUSUPoxfcL/NSDsVvwyCvrxmJ8t3ljiZnEIi/jUh8iw7FyyPX+QCOOYeL1xyofn+Jv+AWcbdEYGUMIdYekDmsZDpzoCKjmvdEBASihTTnezCdh9/qVsXmUVLvFRYmklcJ8yzFK8wKkvbmelLHJc6wzw0tli/l5AWC2tcJVom3/bBVbzy0rEJBaNspL+hU6yLxPSWc2NoGp8emqmySTPXBfzC7cy30E5diGIXh+AII0YhFA9XqJcKgnWjOS/Akqo9Y09/yEh017j0AQdCVdEsVWZRQRb20QB7H5feqSqGZMIQexG0LKVz9pW7CCi8VG8GnaMMpzZisJTu9JclIdSmwDGCkdI1dohdH2HJTWXgbTuWkjiSNaNTehUAgt98k1kkeLsNZP5obt5clX4OVDHzEciogYEwjQ2+m6LFqlQxqnIt4rYUAXzmPdUs4M8OKkOOMeG6Qm0KO9JPw7zNYPqv/6mBwyWt9NwKuo4lqMQMbblbffI"
+  }
+}

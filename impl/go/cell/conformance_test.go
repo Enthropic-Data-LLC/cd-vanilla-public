@@ -135,6 +135,9 @@ var rejectErrors = map[string]error{
 	"no-matching-key":       cell.ErrNoMatchingKey,
 	"retention-expired":     cell.ErrLifetime,
 	"timed-release-locked":  cell.ErrLifetime,
+	"signature-misplaced":   cell.ErrMalformed,
+	"padding-invalid":       cell.ErrMalformed,
+	"access-map-too-large":  cell.ErrMalformed,
 }
 
 func TestConformanceOpenVectors(t *testing.T) {

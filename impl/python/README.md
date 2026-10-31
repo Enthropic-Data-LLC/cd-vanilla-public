@@ -1,7 +1,7 @@
 # cellular-defense (Python)
 
 A Python implementation of the Cellular Defense **`.cell`** encrypted document
-format, written from [`docs/SPEC.md`](../../docs/SPEC.md) v1.3.
+format, written from [`docs/SPEC.md`](../../docs/SPEC.md) v1.4.
 
 The format is a defensive disclosure (TDCommons No. 11391) and no patent is
 asserted over it. This implementation is **Apache-2.0**, not AGPL: the reference
@@ -146,9 +146,11 @@ leak — without being able to read it is the property the whole format rests on
 
 | Area | Status |
 |---|---|
-| Seal / open v1.3 | ✅ |
+| Seal / open v1.4 (blind entries, inner signature, Padmé, Argon2id) | ✅ |
+| Seal / open v1.3 on request (`version="1.3"`) | ✅ |
 | Read v1.0, v1.1, v1.2 and legacy v2.x | ✅ version-gated per cell (§12) |
 | ECDH P-256 → HKDF-SHA256 → AES-KW | ✅ |
+| Argon2id access method (v1.4, via `argon2-cffi`) | ✅ |
 | PBKDF2 (600k) access method | ✅ |
 | WebAuthn PRF access method | ⚠️ wrap/unwrap only — the PRF output must be supplied by a CTAP2 layer; browser-only in practice |
 | Shamir M-of-N quorum over GF(256) | ✅ |
