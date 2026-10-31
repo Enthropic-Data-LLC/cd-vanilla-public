@@ -191,7 +191,7 @@ func cmdSeal(args []string) error {
 		if entered != repeat {
 			return errors.New("passphrases do not match")
 		}
-		recipients = append(recipients, cell.PassphraseRecipient(entered, ""))
+		recipients = append(recipients, cell.Argon2idRecipient(entered, "")) // v1.4 default; PBKDF2 only for pre-1.4 cells
 	}
 	if len(recipients) == 0 {
 		return errors.New("a cell needs at least one recipient (-to or -passphrase)")

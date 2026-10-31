@@ -1,0 +1,49 @@
+{
+  "version": "1.4",
+  "doc_id": "01CONFORMANCE14PAD000000000",
+  "created_at": 1787500000,
+  "header": {
+    "prev_hash": null,
+    "threshold": {
+      "required": 1,
+      "of_total": 1
+    },
+    "lifetime": {
+      "type": "permanent",
+      "advisory": {
+        "retain_until": null,
+        "release_at": null,
+        "single_use": false,
+        "minimum_atl": 1
+      },
+      "disposal": {
+        "at": null,
+        "action": "none"
+      }
+    },
+    "policy": {
+      "copy_protection": "standard",
+      "watermark_mode": "none",
+      "created_on_origin": null,
+      "origin_sig": null
+    },
+    "access_map": [
+      {
+        "method": "ecdh-p256",
+        "wrapped_cek": {
+          "eph_spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEMGbbE5EMPirb0KI/KE1Cxu/tQzrTvZGt5qhnwGEdQKoeB4Ub00VaxNHaQE9SvVr1ahiJClOmmhzFLOhr4HCCMQ==",
+          "hkdf_salt": "5jCAQpGk61DiDgCaIRbj9/fCsExqsYvMumqh4SYvrjY=",
+          "ct": "oWe/0f/I4mdcCEWJCrJMaOEPASoMKxH5U1AiwYvUz2qU6Ly8hQykwQ=="
+        }
+      }
+    ],
+    "payload_hash": "W0Ux5pKf2FXKx4S7ln3FoCyIS56kJeKAsVsJpNtZPBA="
+  },
+  "header_hash": "YbNYIULzz5JODq37DEc4JQ8aSfZnBi2TgLGsoLnu9pU=",
+  "payload": {
+    "alg": "AES-256-GCM",
+    "encoding": "base64+gzip+padme",
+    "iv": "vzCe3RKxnRLLLlPw",
+    "ciphertext": "SLn26bm+jMmPGq3JcI7KBZAmiHTqm2wTAlsfUq0yIIhub5vL1+j6dJeHIn8N7t2bPUt16gIp1ztl1rwpCUMJyo7sQWgV1ICZFZTKPkCo412MNVwyBPRs5atOYRncL7eKWhmo6vqLOljq7awGNw1/qn/j3SSQ6aNuU33pN8TmtdDQJvrzIGSZ8aSOHqabHT7efPWFlFINUpiAiYhwKgoN3+s19W6IW047uqY26umABIJsGKQfHy0S55oLYaBwAomLQ770E01+vJAmonRBU7PmGjuimCxQODs1c6mC9JTQxu85JndFqHjHnziZYB2bhSzeL3DeGlcWm/CS4PhX+gGiMycnr0qMc6SBZZhdhVbVMDEb/12uyMVBLS0O8qnBsuZmBvLirTd2dDOZbIPCeIeV3YuVPBTjK2hsMLNDfqk8OZ89HUhIgxkmNKB60Rxn/aM6IbhWN/oljj/Bd5+AIhWQh3VNEJWTBZbXlWX8O6C6yOZz1NnUVaauTpuKnevvfpShSLO0O9RW5f4MTF+m8wZc1WC5kDu2w73BldXVadVA+PXrBhalLvNWXhzAok4m/u63/K9aVJXtUsLGgmHN7K4QnW715iAGOhhMxMcUG5GrykfVGVOPpYtLq9d8bnuzfm4L+GT9f7+ipJjbfeBvOFI3tZ2CRyVWKuQEANJxrbaMjUI8lxeOKaAwocPUpnbYQ24h"
+  }
+}

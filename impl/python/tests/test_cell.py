@@ -179,17 +179,27 @@ class TestIntegrityRefusals(CellTestCase):
         # access_map is not in the AAD (it does not exist at encryption time),
         # so header_hash is what covers it — and an attacker who recomputes the
         # hash is then caught by the signature, if there is one.
-        cell = self.seal(sender=self.alice)
-        other = self.seal(recipients=[Recipient.for_key(self.bob)])
+        cell = self.seal(sender=self.alice, version="1.3")
+        other = self.seal(recipients=[Recipient.for_key(self.bob)], version="1.3")
         cell["header"]["access_map"] = other["header"]["access_map"]
         rehash(cell)
         with self.assertRaises(SignatureError):
             cell_open(cell, keys=[self.bob])
 
+    def test_swapped_access_map_entry_is_caught_v14(self):
+        # v1.4 has no header signature; the borrowed entry unwraps the other
+        # cell's CEK, which then fails this payload's GCM tag.
+        cell = self.seal(sender=self.alice)
+        other = self.seal(recipients=[Recipient.for_key(self.bob)])
+        cell["header"]["access_map"] = other["header"]["access_map"]
+        rehash(cell)
+        with self.assertRaises(DecryptionError):
+            cell_open(cell, keys=[self.bob])
+
 
 class TestSignatures(CellTestCase):
     def test_signed_cell_reports_the_real_fingerprint(self):
-        cell = self.seal(sender=self.bob)
+        cell = self.seal(sender=self.bob, version="1.3")
         result = cell_open(cell, keys=[self.alice])
         self.assertTrue(result.signed)
         self.assertEqual(result.signer_fingerprint, self.bob.fingerprint)
@@ -197,7 +207,7 @@ class TestSignatures(CellTestCase):
     def test_header_sig_by_is_not_trusted(self):
         # §4.1: header_sig_by is a self-asserted label. Changing it must not
         # change who the cell is attributed to.
-        cell = self.seal(sender=self.bob)
+        cell = self.seal(sender=self.bob, version="1.3")
         cell["header_sig_by"] = "Trust Me Inc"
         rehash(cell)
         result = cell_open(cell, keys=[self.alice])
@@ -207,7 +217,7 @@ class TestSignatures(CellTestCase):
             cell_open(cell, keys=[self.alice], expected_signer="deadbeefdeadbeef")
 
     def test_invalid_signature_is_refused(self):
-        cell = self.seal(sender=self.bob)
+        cell = self.seal(sender=self.bob, version="1.3")
         raw = bytearray(b64decode(cell["header_sig"]))
         raw[0] ^= 0xFF
         cell["header_sig"] = b64encode(bytes(raw))
@@ -215,7 +225,7 @@ class TestSignatures(CellTestCase):
             cell_open(cell, keys=[self.alice])
 
     def test_forged_signature_key_is_refused(self):
-        cell = self.seal(sender=self.bob)
+        cell = self.seal(sender=self.bob, version="1.3")
         cell["header_sig_key"] = self.alice.spki
         with self.assertRaises(SignatureError):
             cell_open(cell, keys=[self.alice])
@@ -223,7 +233,7 @@ class TestSignatures(CellTestCase):
     def test_der_encoded_signature_is_refused(self):
         # §4.1's named trap: every general-purpose library produces DER by
         # default, and DER in header_sig must not verify.
-        cell = self.seal(sender=self.bob)
+        cell = self.seal(sender=self.bob, version="1.3")
         der = crypto.p1363_to_der(b64decode(cell["header_sig"]))
         cell["header_sig"] = b64encode(der)
         with self.assertRaises(MalformedCellError):
@@ -234,7 +244,7 @@ class TestSignatures(CellTestCase):
         # byte-indistinguishable from a cell that was never signed. "Opened
         # without error" is therefore not evidence of authorship — only an
         # out-of-band expectation is.
-        cell = self.seal(sender=self.bob)
+        cell = self.seal(sender=self.bob, version="1.3")
         for key in ("header_sig", "header_sig_by", "header_sig_key"):
             cell[key] = None
         rehash(cell)
@@ -343,7 +353,7 @@ class TestEncodingAndMalformed(CellTestCase):
     def test_encoder_emits_standard_base64_only(self):
         # §4.0: base64url is not merely non-canonical, it is unparseable by the
         # reference (atob throws on - and _).
-        blob = json.dumps(self.seal(bytes(range(256)) * 8, sender=self.alice))
+        blob = json.dumps(self.seal(bytes(range(256)) * 8, sender=self.alice, version="1.3"))
         for field in ("ciphertext", "iv", "header_hash", "header_sig"):
             self.assertIn(field, blob)
         b64_values = _collect_b64(json.loads(blob))
@@ -437,8 +447,8 @@ class TestSerializationRouting(CellTestCase):
         # downgrades a new version's serialization with no error anywhere.
         from cellular_defense import AAD_VERSIONS, CANONICAL_VERSIONS, SUPPORTED_VERSIONS
 
-        self.assertEqual(CANONICAL_VERSIONS, {"1.2", "1.3"})
-        self.assertEqual(AAD_VERSIONS, {"1.1", "1.2", "1.3"})
+        self.assertEqual(CANONICAL_VERSIONS, {"1.2", "1.3", "1.4"})
+        self.assertEqual(AAD_VERSIONS, {"1.1", "1.2", "1.3", "1.4"})
         self.assertIn(CELL_FORMAT_VERSION, CANONICAL_VERSIONS)
         self.assertIn(CELL_FORMAT_VERSION, AAD_VERSIONS)
         self.assertTrue(CANONICAL_VERSIONS <= SUPPORTED_VERSIONS)
@@ -499,3 +509,98 @@ def _collect_b64(value, out=None) -> list[str]:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FAST_ARGON = {"m": 19456, "t": 2, "p": 1}  # the floor openers accept — keeps tests quick
+
+
+class TestV14(CellTestCase):
+    """v1.4: blind entries, inner signature, Padmé padding, Argon2id (§4.5, §5.4, §6)."""
+
+    def test_entries_name_no_one(self):
+        cell = self.seal(recipients=[Recipient.for_key(self.alice), Recipient.for_key(self.bob)],
+                         sender=self.bob)
+        for entry in cell["header"]["access_map"]:
+            self.assertNotIn("fingerprint", entry)
+            self.assertNotIn("label", entry)
+        outside = json.dumps({k: v for k, v in cell.items() if k != "payload"})
+        for key in (self.alice, self.bob):
+            self.assertNotIn(key.fingerprint, outside)
+            self.assertNotIn(key.spki, outside)
+        for field in ("header_sig", "header_sig_by", "header_sig_key"):
+            self.assertNotIn(field, cell)
+
+    def test_inner_signature_and_signed_to(self):
+        cell = self.seal(recipients=[Recipient.for_key(self.alice)], sender=self.bob)
+        result = cell_open(cell, keys=[self.alice])
+        self.assertTrue(result.signed)
+        self.assertEqual(result.signer_fingerprint, self.bob.fingerprint)
+        self.assertEqual(result.signed_to, [self.alice.fingerprint])
+        cell_open(cell, keys=[self.alice], expected_signer=self.bob.fingerprint)
+        with self.assertRaises(SignatureError):
+            cell_open(cell, keys=[self.alice], expected_signer="deadbeefdeadbeef")
+
+    def test_unsigned_with_expected_signer_is_refused(self):
+        cell = self.seal()
+        with self.assertRaises(SignatureError):
+            cell_open(cell, keys=[self.alice], expected_signer=self.bob.fingerprint)
+
+    def test_signature_binds_cell_identity(self):
+        for field in ("created_at", "doc_id"):
+            cell = self.seal(sender=self.bob)
+            cell[field] = cell["created_at"] + 1 if field == "created_at" else "X" + cell["doc_id"][1:]
+            with self.assertRaises(SignatureError):
+                cell_open(cell, keys=[self.alice])
+
+    def test_header_signature_on_v14_is_refused(self):
+        cell = self.seal()
+        cell["header_sig"] = "AAAA"
+        with self.assertRaises(MalformedCellError):
+            cell_open(cell, keys=[self.alice])
+
+    def test_version_relabel_fails(self):
+        cell = self.seal()
+        cell["version"] = "1.3"
+        with self.assertRaises(DecryptionError):
+            cell_open(cell, keys=[self.alice])
+
+    def test_padding(self):
+        small = self.seal(b"x")
+        larger = self.seal(b"y" * 300)
+        self.assertEqual(len(b64decode(small["payload"]["ciphertext"])), 512 + 16)
+        self.assertEqual(len(b64decode(small["payload"]["ciphertext"])),
+                         len(b64decode(larger["payload"]["ciphertext"])))
+        self.assertEqual(small["payload"]["encoding"], "base64+gzip+padme")
+        body = bytearray(crypto.pad_body(b"\x01\x02\x03"))
+        self.assertEqual(crypto.unpad_body(bytes(body)), b"\x01\x02\x03")
+        body[-1] = 7
+        with self.assertRaises(MalformedCellError):
+            crypto.unpad_body(bytes(body))
+
+    def test_argon2id_round_trip_wrong_pass_and_weak_params(self):
+        cell = self.seal(b"argon", recipients=[Recipient.argon2id("correct horse battery staple", FAST_ARGON)])
+        entry = cell["header"]["access_map"][0]
+        self.assertEqual((entry["method"], entry["wrapped_cek"]["m"]), ("argon2id", 19456))
+        self.assertEqual(cell_open(cell, passphrases=["correct horse battery staple"]).data, b"argon")
+        with self.assertRaises(NoMatchingKeyError):
+            cell_open(cell, passphrases=["wrong horse"])
+        for bad in ({"m": 8, "t": 1}, {"m": 19456, "t": 1}, {"m": 4194304}):
+            with self.assertRaises(MalformedCellError):
+                crypto.argon2id_unwrap_cek({**entry["wrapped_cek"], **bad}, "x")
+
+    def test_argon2id_nfc(self):
+        cell = self.seal(b"nfc", recipients=[Recipient.argon2id("café au lait sous la pluie", FAST_ARGON)])
+        self.assertEqual(cell_open(cell, passphrases=["café au lait sous la pluie"]).data, b"nfc")
+
+    def test_access_map_limit(self):
+        cell = self.seal()
+        cell["header"]["access_map"] = cell["header"]["access_map"] * 257
+        rehash(cell)
+        with self.assertRaises(MalformedCellError):
+            cell_open(cell, keys=[self.alice])
+
+    def test_v13_still_writable_and_readable(self):
+        cell = self.seal(sender=self.bob, version="1.3")
+        self.assertEqual(cell["version"], "1.3")
+        self.assertEqual(cell["header"]["access_map"][0]["fingerprint"], self.alice.fingerprint)
+        self.assertTrue(cell_open(cell, keys=[self.alice]).signed)

@@ -209,7 +209,7 @@ class TestJsSealsPythonOpens(InteropTestCase):
                 ],
             }
         )
-        self.assertEqual(cell["version"], "1.3")
+        self.assertEqual(cell["version"], "1.4")
         verify_cell(cell)
         result = cell_open(cell, keys=[self.key_from_js(js_key)])
         self.assertEqual(result.data, payload)
@@ -376,3 +376,76 @@ class TestPublishedFigureCells(InteropTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FAST_ARGON = {"m": 19456, "t": 2, "p": 1}
+UNICODE_NAME = "Steuererklärung café 📄 \u2028.pdf"
+NESTED_META = {"case": "2026-0417", "list": [1, 2.5, None, True], "emoji": "🔐", "nested": {"z": 1, "a": "é"}}
+
+
+class TestV14Interop(InteropTestCase):
+    """v1.4 across the boundary: inner signature bytes must agree exactly."""
+
+    def ecdh_spec(self, k: dict) -> dict:
+        return {"method": "ecdh-p256", "label": k["label"], "fingerprint": k["fingerprint"], "spki": k["spki"]}
+
+    def test_js_signed_v14_opens_in_python(self):
+        alice, bob, signer = self.js_keypair("Alice"), self.js_keypair("Bob"), self.js_keypair("Signer")
+        cell = self.js_seal({
+            "data_b64": base64.b64encode(b"signed across").decode(),
+            "filename": UNICODE_NAME, "content_type": "application/pdf",
+            "meta": NESTED_META, "recipients": [self.ecdh_spec(alice), self.ecdh_spec(bob)], "sender": signer,
+        })
+        self.assertEqual(cell["version"], "1.4")
+        self.assertNotIn("header_sig", cell)
+        result = cell_open(cell, keys=[self.key_from_js(bob)], expected_signer=signer["fingerprint"])
+        self.assertEqual(result.data, b"signed across")
+        self.assertEqual(result.filename, UNICODE_NAME)
+        self.assertEqual(result.meta, NESTED_META)
+        self.assertEqual(result.signed_to, sorted([alice["fingerprint"], bob["fingerprint"]]))
+
+    def test_python_signed_v14_verifies_in_the_reference(self):
+        js_key = self.js_keypair("Bob")
+        sender = KeyRecord.generate("Sender")
+        cell = cell_create(b"python signs 1.4", UNICODE_NAME, [Recipient.ecdh(js_key["spki"])],
+                           content_type="application/pdf", meta=NESTED_META, sender=sender)
+        out = self.js_open(cell, {"keys": [js_key]})
+        self.assertEqual(out["sig_verified"], sender.fingerprint)
+        self.assertEqual(out["signed_to"], [js_key["fingerprint"]])
+        self.assertEqual(out["filename"], UNICODE_NAME)
+        self.assertEqual(out["meta"], NESTED_META)
+
+    def test_argon2id_both_ways_with_nfc(self):
+        composed, decomposed = "caf\u00e9 au lait sous la pluie", "cafe\u0301 au lait sous la pluie"
+        js_cell = self.js_seal({
+            "data_b64": base64.b64encode(b"js argon").decode(), "filename": "a.txt",
+            "recipients": [{"method": "argon2id", "passphrase": composed, "argon2": FAST_ARGON}],
+        })
+        self.assertEqual(cell_open(js_cell, passphrases=[decomposed]).data, b"js argon")
+        py_cell = cell_create(b"py argon", "a.txt", [Recipient.argon2id(decomposed, FAST_ARGON)])
+        out = self.js_open(py_cell, {"passphrases": [composed]})
+        self.assertEqual(base64.b64decode(out["data_b64"]), b"py argon")
+
+    def test_quorum_blind_entries_both_ways(self):
+        keys = [self.js_keypair(f"Q{i}") for i in range(3)]
+        js_cell = self.js_seal({
+            "data_b64": base64.b64encode(b"q14").decode(), "filename": "q.txt", "threshold": 2,
+            "recipients": [self.ecdh_spec(k) for k in keys],
+        })
+        self.assertEqual(cell_open(js_cell, keys=[self.key_from_js(k) for k in (keys[2], keys[0])]).data, b"q14")
+        py_cell = cell_create(b"q14py", "q.txt", [Recipient.ecdh(k["spki"]) for k in keys], threshold=2)
+        out = self.js_open(py_cell, {"keys": [keys[1], keys[2]]})
+        self.assertEqual(base64.b64decode(out["data_b64"]), b"q14py")
+
+    def test_v13_still_interoperates(self):
+        js_key = self.js_keypair("Old")
+        sender = KeyRecord.generate("Sender")
+        py_cell = cell_create(b"old format", "o.txt", [Recipient.ecdh(js_key["spki"])], sender=sender, version="1.3")
+        out = self.js_open(py_cell, {"keys": [js_key]})
+        self.assertEqual(out["sig_verified"], sender.fingerprint)
+        js_cell = self.js_seal({
+            "data_b64": base64.b64encode(b"old js").decode(), "filename": "o.txt", "version": "1.3",
+            "recipients": [self.ecdh_spec(js_key)], "sender": js_key,
+        })
+        self.assertEqual(js_cell["version"], "1.3")
+        self.assertTrue(cell_open(js_cell, keys=[self.key_from_js(js_key)]).signed)

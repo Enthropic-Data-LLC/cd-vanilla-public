@@ -409,4 +409,94 @@ public final class CellCrypto {
     public static void wipe(byte[] buffer) {
         Arrays.fill(buffer, (byte) 0);
     }
+
+    // ─── CEK wrapping — Argon2id, spec §6.5 (v1.4) ──────────────────────────
+
+    /** Written by default: RFC 9106 §4's second recommended option (m KiB, t, p). */
+    public static final int[] ARGON2_DEFAULTS = {65536, 3, 4};
+    private static final int ARGON2_M_MIN = 19456;
+    private static final int ARGON2_M_MAX = 1048576;
+    private static final int ARGON2_ONE_PASS_MIN_M = 47104;
+
+    /**
+     * Refuse parameters outside the bounds of §6.5, exactly as the reference
+     * does: below the floor the passphrase is barely protected; above the
+     * ceiling a hostile cell can exhaust the opener's memory or time.
+     */
+    public static void argon2Check(long m, long t, long p) {
+        if (m < ARGON2_M_MIN || m > ARGON2_M_MAX || t < 1 || t > 16 || p < 1 || p > 16) {
+            throw new CellException.Malformed("Argon2id parameters out of range — refusing (§6.5)");
+        }
+        if (t == 1 && m < ARGON2_ONE_PASS_MIN_M) {
+            throw new CellException.Malformed(
+                    "Argon2id with one pass needs at least 46 MiB — refusing (§6.5)");
+        }
+    }
+
+    /**
+     * Argon2id v0x13, 32-byte tag, over the UTF-8 of the passphrase's NFC form.
+     * Unlike PBKDF2 entries (§6.2), v1.4 normalizes: a passphrase typed with a
+     * composed é on one machine and a decomposed é on another is one passphrase.
+     */
+    public static byte[] argon2Key(String passphrase, byte[] salt, int m, int t, int p) {
+        byte[] secret = java.text.Normalizer.normalize(passphrase, java.text.Normalizer.Form.NFC)
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var params = new org.bouncycastle.crypto.params.Argon2Parameters.Builder(
+                org.bouncycastle.crypto.params.Argon2Parameters.ARGON2_id)
+                .withVersion(org.bouncycastle.crypto.params.Argon2Parameters.ARGON2_VERSION_13)
+                .withSalt(salt).withIterations(t).withMemoryAsKB(m).withParallelism(p).build();
+        var generator = new org.bouncycastle.crypto.generators.Argon2BytesGenerator();
+        generator.init(params);
+        byte[] key = new byte[32];
+        generator.generateBytes(secret, key);
+        wipe(secret);
+        return key;
+    }
+
+    // ─── Padding — Padmé, spec §5.4 (v1.4) ──────────────────────────────────
+
+    private static final int PAD_FLOOR = 512;
+
+    /** Padmé (Nikitin et al., PETS 2019) with a 512-byte floor. */
+    public static long padmeLength(long n) {
+        if (n <= PAD_FLOOR) {
+            return PAD_FLOOR;
+        }
+        int e = 63 - Long.numberOfLeadingZeros(n);     // floor(log2 n)
+        int s = 64 - Long.numberOfLeadingZeros(e);     // floor(log2 e) + 1
+        long step = 1L << (e - s);
+        return (n + step - 1) / step * step;
+    }
+
+    /** {@code LE32(len(gz)) || gz || zeros} up to {@code padmeLength(4 + len(gz))}. */
+    public static byte[] padBody(byte[] gz) {
+        if (gz.length < 0 || (long) gz.length >= (1L << 32)) {
+            throw new CellException.Malformed("body of 2^32 bytes or more is out of scope");
+        }
+        byte[] out = new byte[(int) padmeLength(4L + gz.length)];
+        out[0] = (byte) gz.length;
+        out[1] = (byte) (gz.length >>> 8);
+        out[2] = (byte) (gz.length >>> 16);
+        out[3] = (byte) (gz.length >>> 24);
+        System.arraycopy(gz, 0, out, 4, gz.length);
+        return out;
+    }
+
+    /** Inverse of {@link #padBody}: reject an overrunning length or non-zero padding. */
+    public static byte[] unpadBody(byte[] body) {
+        if (body.length < 4) {
+            throw new CellException.Malformed("malformed padded body");
+        }
+        long n = (body[0] & 0xffL) | (body[1] & 0xffL) << 8 | (body[2] & 0xffL) << 16
+                | (body[3] & 0xffL) << 24;
+        if (4 + n > body.length) {
+            throw new CellException.Malformed("malformed padded body — length exceeds body");
+        }
+        for (int i = (int) (4 + n); i < body.length; i++) {
+            if (body[i] != 0) {
+                throw new CellException.Malformed("malformed padded body — non-zero padding");
+            }
+        }
+        return java.util.Arrays.copyOfRange(body, 4, (int) (4 + n));
+    }
 }

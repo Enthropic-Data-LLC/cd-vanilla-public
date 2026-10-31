@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Enthropic Data LLC
 # SPDX-License-Identifier: AGPL-3.0-only
 """
-Independent verifier for .cell v1.2/v1.3 envelopes.
+Independent verifier for .cell v1.2/v1.3/v1.4 envelopes.
 
 Written from docs/SPEC.md alone, in a different language, using a
 general-purpose cryptographic library (`cryptography`, i.e. OpenSSL) and no
@@ -34,7 +34,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 from cryptography.hazmat.primitives.serialization import load_der_public_key
 
-CANONICAL_VERSIONS = {"1.2", "1.3"}
+CANONICAL_VERSIONS = {"1.2", "1.3", "1.4"}
+INNER_SIG_VERSIONS = {"1.4"}  # §4.5: the signature is inside the ciphertext
 
 
 def canonicalize(v):
@@ -91,7 +92,18 @@ def verify(path):
     check("payload_hash", ph == cell["header"]["payload_hash"])
 
     # 3/4. Signature — §4.1. Optional, but if present it must verify.
-    if cell.get("header_sig") and cell.get("header_sig_key"):
+    if version in INNER_SIG_VERSIONS:
+        misplaced = any(cell.get(k) for k in ("header_sig", "header_sig_by", "header_sig_key"))
+        if misplaced:
+            check("no header signature (v1.4)", False, "v1.4 signs inside the payload (§4.5)")
+        else:
+            print("  ----  signature (if any) is inside the encrypted payload — v1.4 §4.5; "
+                  "only a recipient can see or verify it")
+        entries = cell["header"].get("access_map") or []
+        check("blind access map (v1.4)",
+              all("fingerprint" not in e and "label" not in e for e in entries) and len(entries) <= 256,
+              f"{len(entries)} entries, none naming a recipient")
+    elif cell.get("header_sig") and cell.get("header_sig_key"):
         spki = base64.b64decode(cell["header_sig_key"])
         fpr = hashlib.sha256(spki).hexdigest()[:16]
         check(

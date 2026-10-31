@@ -1,0 +1,49 @@
+{
+  "version": "1.4",
+  "doc_id": "01M4XTHXSHMXS8Q7GWB2EVRXR8",
+  "created_at": 1787500000,
+  "header": {
+    "prev_hash": null,
+    "threshold": {
+      "required": 1,
+      "of_total": 1
+    },
+    "lifetime": {
+      "type": "permanent",
+      "advisory": {
+        "retain_until": null,
+        "release_at": null,
+        "single_use": false,
+        "minimum_atl": 1
+      },
+      "disposal": {
+        "at": null,
+        "action": "none"
+      }
+    },
+    "policy": {
+      "copy_protection": "standard",
+      "watermark_mode": "none",
+      "created_on_origin": null,
+      "origin_sig": null
+    },
+    "access_map": [
+      {
+        "method": "ecdh-p256",
+        "wrapped_cek": {
+          "eph_spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE0T013tlBygLASlri4GVW7JuRa/WAe0G7qGDBEUwmmIYnvQy+6CTTp9s7QRyiiysootL/1yIVGQ3KmN0nl0Eijw==",
+          "hkdf_salt": "uZEMWTDdZVpheaCWZV7IYJEFwhdgGbboPyw1b369obs=",
+          "ct": "Jw7cb6s+E6ATHnklKlJT2K/3hYQTqrIGv+sJKIy7KUTEqCWFkPLpBQ=="
+        }
+      }
+    ],
+    "payload_hash": "JVGjcsod7xZ3kpV+cF/1gfJ1xkj0T2X/p7diuWyctVE="
+  },
+  "header_hash": "/mrW3qrDoHoSmHO3EdkyQzOF5K7p5UKtTic3H+ozTkw=",
+  "payload": {
+    "alg": "AES-256-GCM",
+    "encoding": "base64+gzip+padme",
+    "iv": "uYM96Pz1ihrqDLwB",
+    "ciphertext": "+1ZJspa6r7N+kQFCYAg3ak3rpbfJY2lUSc4MEO88drSLz6/ybKpF2vv17XVkDuhk7wOixUDYCA9sFwNIvkMJESs588ddASIbmzd4lVbR26pCTC6pwF5AlsX0epmqK4J/NzM5n8+BLU0913BParOtofs7fPwVvxhf0tAo87HMWOP1TcbAKWKKa7sQJ3bdmmrjqZQHycTVEctcch6tDZKueAMZ6iwSPMbA1Vhd+Geby7WXhGMQOf+tneXZVwB7ddgAUudqxMWnxGmi0DBjva8YB8wS27laEH5mGLcbpw1lcuW+WnCeoaYB6ZajsmZAz0482RSsAWPaidUQSCS5lQaRTtAHvP037takvOaFzIPDZ2cWKFUmq+5sZtYtcHENNfVJg9GVlVcn8yr+XrXorjK3miw8Ns+gW101JEtSHoOJo0qnKdiGLIK7sHo9yvOM1a1SQ/opLfBibkbhHtiVsJu0Rf81kIiUf2cPz82pcFws4/pQbMAjWZ5yHRBalBL0zkXknkAEAN70irftI0YXihR3fu+797WxH8MIuGa8H26FUxdj/x+ul3PE5uDVtmd6FHl7uZKvfgMoS1GtYAxeMCqvZt+21+mozp7oCW/zJvp5XMFVbikVwP0ODMDkgD998bikmfZ/Lz2/7xJxJS3MvVGnBChLBeU6/y9iyWC9J5W8/35JO+4v1MXJR8v7+isRYjwj"
+  }
+}

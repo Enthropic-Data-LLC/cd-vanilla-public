@@ -166,7 +166,7 @@ fn cmd_seal(args: &[String]) -> CmdResult {
         if entered != prompt_passphrase("Repeat: ")? {
             return Err("passphrases do not match".into());
         }
-        recipients.push(Recipient::passphrase(&entered, ""));
+        recipients.push(Recipient::argon2id(&entered, "")); // v1.4 default; pbkdf2 only for pre-1.4 cells
     }
     if recipients.is_empty() {
         return Err("a cell needs at least one recipient (--to or --passphrase)".into());

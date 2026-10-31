@@ -69,6 +69,9 @@ fn matches_reason(err: &Error, reason: &str) -> bool {
             | ("no-matching-key", Error::NoMatchingKey)
             | ("retention-expired", Error::Lifetime(_))
             | ("timed-release-locked", Error::Lifetime(_))
+            | ("signature-misplaced", Error::Malformed(_))
+            | ("padding-invalid", Error::Malformed(_))
+            | ("access-map-too-large", Error::Malformed(_))
     )
 }
 

@@ -1,0 +1,49 @@
+{
+  "version": "1.4",
+  "doc_id": "01CONFORMANCE14PAD000000000",
+  "created_at": 1787500000,
+  "header": {
+    "prev_hash": null,
+    "threshold": {
+      "required": 1,
+      "of_total": 1
+    },
+    "lifetime": {
+      "type": "permanent",
+      "advisory": {
+        "retain_until": null,
+        "release_at": null,
+        "single_use": false,
+        "minimum_atl": 1
+      },
+      "disposal": {
+        "at": null,
+        "action": "none"
+      }
+    },
+    "policy": {
+      "copy_protection": "standard",
+      "watermark_mode": "none",
+      "created_on_origin": null,
+      "origin_sig": null
+    },
+    "access_map": [
+      {
+        "method": "ecdh-p256",
+        "wrapped_cek": {
+          "eph_spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbA3OKCI2YswKpO1AymakXPaKkq4awDegzRJA4UYEuHzHgBSNzZUoB+04OiolDiV1wJQs5FM/KnEf1mLl7Wf/Gw==",
+          "hkdf_salt": "5wUDRJ9VtoYr2Y4TCx5mDKJqsa608ykBUfWRFg6UOGU=",
+          "ct": "Wa+LasIeDtgtxNDNI4Ln/MWEAsbEaZCHfi5HeETdtt6tgSs3pumFoQ=="
+        }
+      }
+    ],
+    "payload_hash": "AByoD/4vCzyABSxHoqdP8i/vYfjIRF41CjvcgvV6Sq0="
+  },
+  "header_hash": "a8sDO7MtrZ64Wo3ehe+YkiXhO3k1Ze33GKHyT90+UhQ=",
+  "payload": {
+    "alg": "AES-256-GCM",
+    "encoding": "base64+gzip+padme",
+    "iv": "2iHLW+p0mJinyQyz",
+    "ciphertext": "3udHhxYC2eMeUlEIAf5Fk8sqvUAzB5F3RHjrcb6ngoH/NtjmJdz9dx5v0lun35vUQ38Js1fEkdcAcrPyRNDPZIpOogVsIEFwvtVMnymno5IekwaOQ332nMBD0Hh+WlSclIFnKvNoae050dQ+2M/qRr0inWFuIe3wn363RcQ+LEMkeyScWUE0DHlvNFllrgVnidSG0E4DeA3zXO/1ANlhD7lhDGUq91tivy+VySM3GBbl0hVK371fWF0/pm2YL6WKcVLtf/Y7S0u/3FyKMiaxDtAZeHi3v9rP3C6cI3WA9IwaLW5Ox7dthj1CJYb4DAdoko4LrxiibK2a7HfsjbDfMEc7qZi1DBFAgTe4EcF+b6i9Px1/NC0iwsMqTTsr0iQorapxlz+e/q3Xt+SSHidz0yHEGUJk6mXvL1p+l8esNrtPkzEHIVCjVDUYahL8n7Xx1mI92aqZjMi0YBmtyfUdP5z2up54ushiI1K4OD6Is4KCnHP6ZHklRF/0SwW3F6SnVAT82FbTMoAj9EiIXm8dCe1haYnlnyMzMeDzfTF+kyTmSJU7MZlOm8e6VpAamP853pqnob/i3PvxFX5On70rDGB6dHHDwZjISp6MuV2pZdAK3fNSCEoLQpoRfm6918EPnG+/FMHcT+6YtexKzwrvlvOo9ugStr41tRjj2ajxhN1GMC64niShf9aRxJjzghS3"
+  }
+}

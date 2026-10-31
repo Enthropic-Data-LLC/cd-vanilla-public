@@ -1,0 +1,49 @@
+{
+  "version": "1.4",
+  "doc_id": "01M4XTHY2ZFPTRKKVX97ZC8MHZ",
+  "created_at": 1787500000,
+  "header": {
+    "prev_hash": null,
+    "threshold": {
+      "required": 1,
+      "of_total": 1
+    },
+    "lifetime": {
+      "type": "permanent",
+      "advisory": {
+        "retain_until": null,
+        "release_at": null,
+        "single_use": false,
+        "minimum_atl": 1
+      },
+      "disposal": {
+        "at": null,
+        "action": "none"
+      }
+    },
+    "policy": {
+      "copy_protection": "standard",
+      "watermark_mode": "none",
+      "created_on_origin": null,
+      "origin_sig": null
+    },
+    "access_map": [
+      {
+        "method": "ecdh-p256",
+        "wrapped_cek": {
+          "eph_spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEXr2IQAJp7cWaMLH9uzSdiZSNHhibt7d5VDQfsdKoIa8YqIZv1sqSd01usx/JtD+AVtV+VnRVS1gQ5De4oj+ShQ==",
+          "hkdf_salt": "upfhQ1y199TGjvl56LgRaM908QqIXjrK4bYUZdsHPEs=",
+          "ct": "clxt6bZ2dDw/CJBuh55Ujr3X5XihCdGuAvreqyYpLhfy4WMAqzG0ZQ=="
+        }
+      }
+    ],
+    "payload_hash": "f3+MO+HXFrqFbiAvhQ98QbNptx/GeTjhgv8rmzsIWF4="
+  },
+  "header_hash": "ylaZSz9ANRB48gJEA0MJ+C8DJgRM04BAnMbPwJn1fXE=",
+  "payload": {
+    "alg": "AES-256-GCM",
+    "encoding": "base64+gzip+padme",
+    "iv": "TgXKQc1wOUsy8Jjg",
+    "ciphertext": "Hnvuk6CYptsp1oB6cdS8lrGWnJKvaD1LGJ1uNXD+7pAoX5XSGpY4awZ/hI3P2cGnVABEBbne1IXSOBP65AX17SRG9daFy2f47j9xRBiCBRyJy9UdTcWGVvVwdRBQe4EwexAZkWYZ3KlPn9u9Uj2NAqOofgoRk0F2EXQw7jqUPkKlME97cvQDCC8ww45Gr9mtx+n9wQaxK9JpiHGJ54o4deigfIE77mX1kUJzcz2d0qKcvnRSFEOQ9/ZvcD12y+EfKASS/nXzri19N4gsdOTjn2JGv26MgfQt99Izmi8V1gFnxyFR5Gw9dMCWlkc9dcvMMBSd0VrEN3mPjJqAuv8ITXAJVas2xKEkTdOJKMYYOTe1PwNq5NI9ut1YWmBx2Yw9piuEAQZthdKFpU9NJlN8p7GKm2ZTvgiGPGc11wzm9pleooNK3G7Hiwow+tjtmMBq9z2ToBIXl3evOjJNiy5l39co3jQXylGV1SIqZOmam3/T42aRfvpXuLsTV/EHQJ7Ef+x/VwWIZQLZ/Ngjn6pQDHcLLKt7NBENsXi1Dw7xeOaoyOSfE6At2ZGzeChf7nkG/S3LGUfcPh09a7jF1PCKKQf8lUJmq7XokaYfQOckQm0cgXuOawV/P66ojNYhCE5iJmAnTLKY2vsYpId7vgXdxuQ0R0s+9NUhN2Smabtv8wZfaDPNEXiCaBt4SwZMmXgs"
+  }
+}

@@ -303,6 +303,136 @@ pub fn pbkdf2_unwrap_cek(
     aes_kw_unwrap(&wrapping_key, &decode_b64(ct_b64, "ct")?)
 }
 
+// ─── CEK wrapping — Argon2id, spec §6.5 (v1.4) ──────────────────────────────
+
+/// Written by default: RFC 9106 §4's second recommended option.
+pub const ARGON2_DEFAULTS: (u32, u32, u32) = (65_536, 3, 4);
+const ARGON2_M_MIN: u32 = 19_456;
+const ARGON2_M_MAX: u32 = 1_048_576;
+const ARGON2_ONE_PASS_MIN_M: u32 = 47_104;
+
+/// Refuse parameters outside the bounds of §6.5, exactly as the reference does.
+///
+/// Below the floor the passphrase is barely protected; above the ceiling a
+/// hostile cell can exhaust the opener's memory or time.
+pub fn argon2_check(m: u64, t: u64, p: u64) -> Result<(u32, u32, u32)> {
+    if !(ARGON2_M_MIN as u64..=ARGON2_M_MAX as u64).contains(&m)
+        || !(1..=16).contains(&t)
+        || !(1..=16).contains(&p)
+    {
+        return Err(Error::Malformed(
+            "Argon2id parameters out of range — refusing (§6.5)".into(),
+        ));
+    }
+    if t == 1 && m < ARGON2_ONE_PASS_MIN_M as u64 {
+        return Err(Error::Malformed(
+            "Argon2id with one pass needs at least 46 MiB — refusing (§6.5)".into(),
+        ));
+    }
+    Ok((m as u32, t as u32, p as u32))
+}
+
+/// Argon2id v0x13, 32-byte tag, over the UTF-8 of the passphrase's NFC form.
+///
+/// Unlike PBKDF2 entries (§6.2), v1.4 normalizes: a passphrase typed with a
+/// composed é on one machine and a decomposed é on another is one passphrase.
+fn argon2_key(passphrase: &str, salt: &[u8], m: u32, t: u32, p: u32) -> Result<[u8; 32]> {
+    use unicode_normalization::UnicodeNormalization;
+    let secret: String = passphrase.nfc().collect();
+    let params = argon2::Params::new(m, t, p, Some(32))
+        .map_err(|e| Error::Malformed(format!("Argon2id parameters: {e}")))?;
+    let argon = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+    let mut key = [0u8; 32];
+    argon
+        .hash_password_into(secret.as_bytes(), salt, &mut key)
+        .map_err(|e| Error::Malformed(format!("Argon2id: {e}")))?;
+    Ok(key)
+}
+
+/// Wrap under an Argon2id-derived key. Returns `(salt, m, t, p, ct)`.
+pub fn argon2id_wrap_cek(
+    key_material: &[u8],
+    passphrase: &str,
+    params: Option<(u32, u32, u32)>,
+    salt: Option<&[u8]>,
+) -> Result<(String, u32, u32, u32, String)> {
+    let (m0, t0, p0) = params.unwrap_or(ARGON2_DEFAULTS);
+    let (m, t, p) = argon2_check(m0 as u64, t0 as u64, p0 as u64)?;
+    let salt = match salt {
+        Some(s) => s.to_vec(),
+        None => random_bytes(16),
+    };
+    let kek = argon2_key(passphrase, &salt, m, t, p)?;
+    let wrapped = aes_kw_wrap(&kek, key_material)?;
+    Ok((encode_b64(&salt), m, t, p, encode_b64(&wrapped)))
+}
+
+/// Unwrap an Argon2id entry's `wrapped_cek` object.
+pub fn argon2id_unwrap_cek(wrapped: &serde_json::Value, passphrase: &str) -> Result<Vec<u8>> {
+    let num = |k: &str| wrapped.get(k).and_then(|v| v.as_u64());
+    let (m, t, p) = match (num("m"), num("t"), num("p")) {
+        (Some(m), Some(t), Some(p)) => argon2_check(m, t, p)?,
+        _ => {
+            return Err(Error::Malformed(
+                "Argon2id parameters out of range — refusing (§6.5)".into(),
+            ))
+        }
+    };
+    let text = |k: &str| wrapped.get(k).and_then(|v| v.as_str());
+    let salt = decode_b64(text("salt").unwrap_or(""), "salt")?;
+    if salt.len() < 16 {
+        return Err(Error::Malformed(
+            "Argon2id salt shorter than 16 bytes — refusing (§6.5)".into(),
+        ));
+    }
+    let kek = argon2_key(passphrase, &salt, m, t, p)?;
+    aes_kw_unwrap(&kek, &decode_b64(text("ct").unwrap_or(""), "ct")?)
+}
+
+// ─── Padding — Padmé, spec §5.4 (v1.4) ──────────────────────────────────────
+
+const PAD_FLOOR: usize = 512;
+
+/// Padmé (Nikitin et al., PETS 2019) with a 512-byte floor.
+pub fn padme_length(n: usize) -> usize {
+    if n <= PAD_FLOOR {
+        return PAD_FLOOR;
+    }
+    let e = (usize::BITS - 1 - n.leading_zeros()) as usize; // floor(log2 n)
+    let s = (usize::BITS - e.leading_zeros()) as usize; // floor(log2 e) + 1
+    let step = 1usize << (e - s);
+    n.div_ceil(step) * step
+}
+
+/// `LE32(len(gz)) || gz || zeros` up to `padme_length(4 + len(gz))`.
+pub fn pad_body(gz: &[u8]) -> Result<Vec<u8>> {
+    if gz.len() as u64 >= (1u64 << 32) {
+        return Err(Error::Malformed("body of 2^32 bytes or more is out of scope".into()));
+    }
+    let total = padme_length(4 + gz.len());
+    let mut out = Vec::with_capacity(total);
+    out.extend_from_slice(&(gz.len() as u32).to_le_bytes());
+    out.extend_from_slice(gz);
+    out.resize(total, 0);
+    Ok(out)
+}
+
+/// Inverse of [`pad_body`]: reject a length that runs past the end or any
+/// non-zero padding byte.
+pub fn unpad_body(body: &[u8]) -> Result<&[u8]> {
+    if body.len() < 4 {
+        return Err(Error::Malformed("malformed padded body".into()));
+    }
+    let n = u32::from_le_bytes([body[0], body[1], body[2], body[3]]) as usize;
+    if 4 + n > body.len() {
+        return Err(Error::Malformed("malformed padded body — length exceeds body".into()));
+    }
+    if body[4 + n..].iter().any(|&b| b != 0) {
+        return Err(Error::Malformed("malformed padded body — non-zero padding".into()));
+    }
+    Ok(&body[4..4 + n])
+}
+
 // ─── CEK wrapping — WebAuthn/FIDO2 PRF, spec §6.3 ───────────────────────────
 
 /// Unwrap under a 32-byte WebAuthn PRF output used directly as the AES-KW key.

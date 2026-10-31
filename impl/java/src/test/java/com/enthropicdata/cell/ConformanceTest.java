@@ -72,7 +72,8 @@ class ConformanceTest {
             case "header-hash-missing", "header-hash-mismatch", "payload-hash-mismatch" ->
                     CellException.Integrity.class;
             case "signature-invalid" -> CellException.Signature.class;
-            case "signature-der-encoded" -> CellException.Malformed.class;
+            case "signature-der-encoded", "signature-misplaced", "padding-invalid",
+                    "access-map-too-large" -> CellException.Malformed.class;
             case "aad-mismatch" -> CellException.Decryption.class;
             case "unsupported-version" -> CellException.UnsupportedVersion.class;
             case "quorum-not-met" -> CellException.QuorumNotMet.class;
