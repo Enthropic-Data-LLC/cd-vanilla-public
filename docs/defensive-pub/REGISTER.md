@@ -54,8 +54,8 @@ Bitcoin attestation on 2026-08-10:
 | 961836 | `f7128ba0009ca2e1c744b5bcc463a5980dad035e27b644a91c66b8eaf07e34bf` | 2026-08-10 04:42:43 |
 
 Frozen copies with their upgraded proofs are in `docs/defensive-pub/anchors/v1.3/`
-and must never be edited. `cell-crypto.js` remains **byte-identical to its
-anchor** — `sha256sum cell-crypto.js` reproduces the digest above.
+and must never be edited; hashing them reproduces the digests above. The live
+`cell-crypto.js` has since moved on — see the v1.4 anchor and "Live files" below.
 
 ### `docs/SPEC.md` — documentation revision, stamped 2026-08-23, Bitcoin-confirmed (upgraded 2026-10-08)
 
@@ -126,11 +126,51 @@ Repo tag: `cell-format-v1.2-defensive-pub` (commit `62a8143`).
 Bitcoin anchor: block **958650** (merkle root `cd57b1c2…3aead6`) and block **958690** (merkle root `d3619eda…a44858`).
 Verify (needs a Bitcoin node, or use a block explorer for the merkle roots): `ots verify docs/defensive-pub/anchors/SPEC.md.ots` · Inspect the proof offline: `ots info docs/defensive-pub/anchors/SPEC.md.ots`
 
-> Note the path. `docs/SPEC.md.ots` is the **v1.3** proof and commits to blocks 961803/961805/961836; the v1.2 proof for the digests above lives only in `docs/defensive-pub/anchors/`.
+> Note the path. `docs/SPEC.md.ots` and `cell-crypto.js.ots` are the proofs for the **current** live files (see "Live files" below); the v1.2 proof for the digests above lives only in `docs/defensive-pub/anchors/`.
 
 > **Status of the v1.2 anchor: block-anchored and permanent.** Those `.ots` proofs were upgraded to full Bitcoin attestation on 2026-07-19 and committed. The v1.2 priority date is independently verifiable by anyone against the Bitcoin blockchain, with no dependence on the OpenTimestamps calendars remaining online.
 >
 > **v1.3 is separately anchored and also confirmed.** The proofs stamped 2026-08-09 were upgraded on 2026-08-10 and carry Bitcoin attestations for blocks 961803, 961805 and 961836 — see the v1.3 section above. The two anchors cover different bytes, so cite whichever revision you are actually relying on; neither paragraph covers the repository as a whole.
+
+### v1.4 anchor — Bitcoin-confirmed 2026-10-21
+
+New mechanisms (blind access-map entries, inner sender signature, Padmé padding,
+Argon2id, version in the AAD) — **not covered by any earlier anchor**. Stamped
+2026-10-20 at tag `cell-format-v1.4-defensive-pub` in the private working
+repository; upgraded and confirmed 2026-10-21 (block 972397). The files became
+public in this repository on 2026-10-31.
+
+| Artifact | SHA-256 | Anchored |
+|---|---|---|
+| `docs/SPEC.md` (v1.4) | `35d2883e6c6e277bbb383139cc7c48c7c98bdaa28865158f97e43079300974f8` | 2026-10-20 — **Bitcoin-confirmed** (972397) |
+| `cell-crypto.js` (v1.4) | `19f9fd04f2d5db13a6e5d855433c9e138e4051dcad2bb04f04b63c85da5d17c6` | 2026-10-20 — **Bitcoin-confirmed** (972397) |
+
+Block 972397: merkle root `3616ab4dc0b58b25a94f7d9d40129b90ea1bcd99284df921b12b1c2d41e1801b`,
+mined 2026-10-21 00:35:33 UTC. Frozen copies and proofs: `docs/defensive-pub/anchors/v1.4/`.
+
+### Live files and their root proofs — 2026-10-31
+
+The `.ots` file beside each live file is the proof for *those* bytes:
+
+| Live file | SHA-256 | Root proof |
+|---|---|---|
+| `docs/SPEC.md` | `35d2883e…300974f8` | the v1.4 proof above — the file is byte-identical to `anchors/v1.4/SPEC.md` |
+| `cell-crypto.js` | `1c1b8371c26355ecaae07e6f0225f952e13a457925d477ef1d08ad19aa3e2484` | stamped 2026-10-31 — **pending**; no block is claimed until `ots upgrade` confirms one |
+| `docs/DEFENSIVE-PUBLISHING-GUIDE.md` | `6d97cc4e…7dd95ee0` | the v1.2 proof |
+
+`cell-crypto.js` is v1.4 plus one implementation hardening, and is **no longer
+byte-identical to the v1.4 anchor**: an opener now refuses a PBKDF2 entry whose
+iteration count exceeds 10,000,000 instead of deriving with it. The count is read
+from the file and `header_hash` is unkeyed, so before this an edited entry could
+make an opener run billions of iterations. There is no format change and no cell
+ever written is affected; the Python, Go, Rust and Java ports adopted the same
+ceiling the same day. The mechanisms' priority still dates from the v1.4 anchor —
+this stamp only dates these bytes.
+
+When the v1.4 files were merged here on 2026-10-31, the root proofs for
+`docs/SPEC.md` and `cell-crypto.js` still described v1.3-era bytes; the v1.4
+proofs existed only under `anchors/v1.4/`. Corrected the same day. Nothing was
+lost: each superseded root proof is byte-identical to a copy under `anchors/`.
 
 ## History rewrite, 2026-08-14 — and why it does not touch the anchors
 
