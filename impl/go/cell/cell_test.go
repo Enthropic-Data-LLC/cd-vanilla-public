@@ -321,6 +321,21 @@ func TestAccessControl(t *testing.T) {
 			t.Fatalf("got %v", err)
 		}
 	})
+
+	t.Run("pbkdf2 iteration ceiling", func(t *testing.T) {
+		// The count is attacker-editable (header_hash is unkeyed); above the ceiling it is refused, not derived.
+		c := seal(t, []byte("x"), []cell.Recipient{cell.PassphraseRecipient("right", "")}, cell.CreateOptions{})
+		wrapped := c.GetObject("header").GetArray("access_map")[0].(*cell.Object).GetObject("wrapped_cek")
+		for _, n := range []float64{10000001, 4295567296, 1e19} {
+			wrapped.Set("iterations", n)
+			if _, err := cell.PBKDF2UnwrapCEK(wrapped, "right"); !errors.Is(err, cell.ErrMalformed) {
+				t.Fatalf("iterations=%v: unwrap got %v, want ErrMalformed", n, err)
+			}
+			if _, err := cell.Open(rehash(t, c), cell.OpenOptions{Passphrases: []string{"right"}}); !errors.Is(err, cell.ErrNoMatchingKey) {
+				t.Fatalf("iterations=%v: open got %v, want ErrNoMatchingKey", n, err)
+			}
+		}
+	})
 }
 
 func TestLifetimeGates(t *testing.T) {

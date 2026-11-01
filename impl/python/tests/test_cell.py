@@ -264,6 +264,17 @@ class TestAccessControl(CellTestCase):
         with self.assertRaises(NoMatchingKeyError):
             cell_open(cell, passphrases=["wrong"])
 
+    def test_pbkdf2_iteration_ceiling(self):
+        # The count is attacker-editable (header_hash is unkeyed); above the ceiling it is refused, not derived.
+        cell = self.seal(recipients=[Recipient.passphrase_("right")])
+        wrapped = cell["header"]["access_map"][0]["wrapped_cek"]
+        for n in (10_000_001, 2**32 + 600_000):
+            wrapped["iterations"] = n
+            with self.assertRaises(MalformedCellError):
+                crypto.pbkdf2_unwrap_cek(wrapped, "right")
+            with self.assertRaises(NoMatchingKeyError):
+                cell_open(rehash(cell), passphrases=["right"])
+
     def test_no_key_material_at_all(self):
         with self.assertRaises(NoMatchingKeyError):
             cell_open(self.seal())

@@ -49,6 +49,8 @@ public final class CellCrypto {
             "cellular-defense-cek-wrap-v1".getBytes(StandardCharsets.UTF_8);
     /** Iteration count for passphrase entries (§6.2). */
     public static final int PBKDF2_ITERATIONS = 600_000;
+    /** Ceiling on the count read from a file: header_hash is unkeyed, so an edited entry could otherwise stall the opener. */
+    public static final int PBKDF2_MAX_ITERATIONS = 10_000_000;
     /** AES-GCM nonce length in bytes. */
     public static final int IV_LENGTH = 12;
     /** AES-GCM tag length in bits. Must be stated explicitly — see {@link #aesGcmEncrypt}. */

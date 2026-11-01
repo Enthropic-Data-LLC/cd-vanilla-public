@@ -917,7 +917,9 @@ fn try_unwrap(entry: &Value, opts: &OpenOptions) -> Option<Vec<u8>> {
             let iterations = wrapped
                 .get("iterations")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(crypto::PBKDF2_ITERATIONS as u64) as u32;
+                .unwrap_or(crypto::PBKDF2_ITERATIONS as u64);
+            // Saturate rather than wrap, so 2^32 + 600000 is refused instead of opening as 600000.
+            let iterations = u32::try_from(iterations).unwrap_or(u32::MAX);
             for passphrase in &opts.passphrases {
                 if let Ok(material) = crypto::pbkdf2_unwrap_cek(salt, iterations, ct, passphrase) {
                     return Some(material);

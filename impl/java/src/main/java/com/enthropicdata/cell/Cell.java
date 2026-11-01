@@ -802,11 +802,16 @@ public final class Cell {
                     return null;
                 }
                 byte[] salt = CellCrypto.decodeB64(saltB64, "salt");
-                int iterations = (int) Json.integer(wrapped, "iterations",
+                long iterationsField = Json.integer(wrapped, "iterations",
                         CellCrypto.PBKDF2_ITERATIONS);
-                if (iterations <= 0) {
-                    iterations = CellCrypto.PBKDF2_ITERATIONS;
+                if (iterationsField <= 0) {
+                    iterationsField = CellCrypto.PBKDF2_ITERATIONS;
                 }
+                // Checked before the narrowing cast, so 2^32 + 600000 is refused instead of opening as 600000.
+                if (iterationsField > CellCrypto.PBKDF2_MAX_ITERATIONS) {
+                    return null;
+                }
+                int iterations = (int) iterationsField;
                 for (String passphrase : opts.passphrases) {
                     try {
                         byte[] wrappingKey =

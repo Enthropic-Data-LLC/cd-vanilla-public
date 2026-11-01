@@ -184,6 +184,17 @@ test('CellCreate/Open', 'PBKDF2: wrong passphrase rejects', async () => {
   }), 'No matching key');
 });
 
+test('CellCreate/Open', 'PBKDF2: an iteration count above the ceiling is refused before any derivation', async () => {
+  const rec  = { method: 'pbkdf2', label: 'pw', passphrase: 'correct' };
+  const cell = await w.cellCreate(mkFile('secret', 's.txt', 'text/plain'), [rec]);
+  const wc   = cell.header.access_map[0].wrapped_cek;
+  for (const n of [10000001, 4295567296, 2 ** 53]) {
+    const t0 = Date.now();
+    await rejects(() => w.pbkdf2UnwrapCek({ ...wc, iterations: n }, 'correct'), 'out of range');
+    assert(Date.now() - t0 < 1000, `iterations=${n} was not refused up front`);
+  }
+});
+
 test('CellCreate/Open', 'binary file round-trip (non-text bytes preserved)', async () => {
   const bin  = w.crypto.getRandomValues(new Uint8Array(1024));
   const file = mkFile(bin, 'data.bin', 'application/octet-stream');

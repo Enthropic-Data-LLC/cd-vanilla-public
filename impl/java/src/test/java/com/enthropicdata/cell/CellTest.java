@@ -284,6 +284,23 @@ class CellTest {
     }
 
     @Test
+    void pbkdf2IterationCeiling() {
+        // The count is attacker-editable (header_hash is unkeyed); above the ceiling it is refused, not derived.
+        // 2^32 + 600000 used to narrow to 600000 in the (int) cast and open normally.
+        Map<String, Object> cell = seal("x".getBytes(),
+                List.of(Cell.Recipient.passphrase("right", null)), null);
+        Cell.OpenOptions right = new Cell.OpenOptions();
+        right.passphrases = List.of("right");
+        Map<String, Object> wrapped = Json.object(Json.asObject(
+                Json.array(Json.object(cell, "header"), "access_map").get(0)), "wrapped_cek");
+        for (double n : new double[] {10_000_001, 4_295_567_296.0}) {
+            wrapped.put("iterations", n);
+            rehash(cell);
+            assertThrows(CellException.NoMatchingKey.class, () -> Cell.open(cell, right));
+        }
+    }
+
+    @Test
     void lifetimeGates() {
         long now = KeyRecord.now();
 

@@ -237,6 +237,25 @@ fn passphrase_entries() {
 }
 
 #[test]
+fn pbkdf2_iteration_ceiling() {
+    // The count is attacker-editable (header_hash is unkeyed); above the ceiling it is refused, not derived.
+    // 2^32 + 600000 used to wrap to 600000 in the `as u32` cast and open normally.
+    let mut cell = seal(b"x", &[Recipient::passphrase("right", "")], CreateOptions::default());
+    let right = OpenOptions { passphrases: vec!["right".into()], ..Default::default() };
+    let w = cell["header"]["access_map"][0]["wrapped_cek"].clone();
+    let (salt, ct) = (w["salt"].as_str().unwrap(), w["ct"].as_str().unwrap());
+    assert!(matches!(
+        crypto::pbkdf2_unwrap_cek(salt, 10_000_001, ct, "right"),
+        Err(Error::Malformed(_))
+    ));
+    for n in [10_000_001u64, (1u64 << 32) + 600_000] {
+        cell["header"]["access_map"][0]["wrapped_cek"]["iterations"] = json!(n);
+        rehash(&mut cell);
+        assert!(matches!(open(&cell, &right), Err(Error::NoMatchingKey)), "iterations={n}");
+    }
+}
+
+#[test]
 fn lifetime_gates() {
     let alice = KeyRecord::generate("Alice");
     let opts = keys_for(&[&alice]);

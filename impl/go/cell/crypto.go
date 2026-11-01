@@ -37,6 +37,8 @@ const (
 	HKDFInfo = "cellular-defense-cek-wrap-v1"
 	// PBKDF2Iterations is the iteration count for passphrase entries (§6.2).
 	PBKDF2Iterations = 600000
+	// PBKDF2MaxIterations caps the count read from a file: header_hash is unkeyed, so an edited entry could otherwise stall the opener.
+	PBKDF2MaxIterations = 10000000
 	// IVLength is the AES-GCM nonce length in bytes.
 	IVLength = 12
 	// CEKLength is the content encryption key length in bytes.
@@ -306,6 +308,12 @@ func PBKDF2UnwrapCEK(wrapped *Object, passphrase string) ([]byte, error) {
 	salt, err := DecodeB64(wrapped.GetString("salt"), "salt")
 	if err != nil {
 		return nil, err
+	}
+	// Checked on the float, before int(): an out-of-range conversion is platform-defined and can come out negative.
+	if v, ok := wrapped.Get("iterations"); ok {
+		if f, isNum := v.(float64); isNum && f > PBKDF2MaxIterations {
+			return nil, fmt.Errorf("%w: PBKDF2 iteration count out of range — refusing", ErrMalformed)
+		}
 	}
 	iterations := wrapped.GetInt("iterations", PBKDF2Iterations)
 	if iterations <= 0 {

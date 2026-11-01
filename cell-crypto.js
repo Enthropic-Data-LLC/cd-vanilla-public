@@ -316,12 +316,18 @@ async function pbkdf2WrapCek(cekRaw, passphrase, saltIn) {
   return { salt: toB64(salt), iterations: 600000, ct: toB64(new Uint8Array(wrapped)) };
 }
 
+// The count comes from the file and header_hash is unkeyed, so without a ceiling an edited entry can stall the opener.
+const PBKDF2_MAX_ITERATIONS = 10000000;
+
 async function pbkdf2UnwrapCek(wrappedCek, passphrase) {
+  const iterations = wrappedCek.iterations || 600000;
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > PBKDF2_MAX_ITERATIONS)
+    throw new Error('PBKDF2 iteration count out of range — refusing');
   const base = await crypto.subtle.importKey(
     'raw', new TextEncoder().encode(passphrase), 'PBKDF2', false, ['deriveKey']
   );
   const wrap = await crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: fromB64(wrappedCek.salt), iterations: wrappedCek.iterations || 600000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: fromB64(wrappedCek.salt), iterations, hash: 'SHA-256' },
     base, { name: 'AES-KW', length: 256 }, false, ['unwrapKey']
   );
   const cekKey = await crypto.subtle.unwrapKey(

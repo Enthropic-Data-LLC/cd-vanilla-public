@@ -32,6 +32,8 @@ use crate::error::{Error, Result};
 pub const HKDF_INFO: &[u8] = b"cellular-defense-cek-wrap-v1";
 /// Iteration count for passphrase entries (§6.2).
 pub const PBKDF2_ITERATIONS: u32 = 600_000;
+/// Ceiling on the count read from a file: `header_hash` is unkeyed, so an edited entry could otherwise stall the opener.
+pub const PBKDF2_MAX_ITERATIONS: u32 = 10_000_000;
 /// AES-GCM nonce length in bytes.
 pub const IV_LENGTH: usize = 12;
 /// Content encryption key length in bytes.
@@ -299,6 +301,9 @@ pub fn pbkdf2_unwrap_cek(
     } else {
         iterations
     };
+    if iterations > PBKDF2_MAX_ITERATIONS {
+        return Err(Error::Malformed("PBKDF2 iteration count out of range — refusing".into()));
+    }
     let wrapping_key = derive_passphrase_key(passphrase, &salt, iterations);
     aes_kw_unwrap(&wrapping_key, &decode_b64(ct_b64, "ct")?)
 }

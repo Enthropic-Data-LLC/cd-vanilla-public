@@ -34,6 +34,8 @@ from .errors import CellError, DecryptionError, MalformedCellError
 CURVE = ec.SECP256R1()
 HKDF_INFO = b"cellular-defense-cek-wrap-v1"
 PBKDF2_ITERATIONS = 600_000
+#: The count comes from the file and header_hash is unkeyed, so without a ceiling an edited entry can stall the opener.
+PBKDF2_MAX_ITERATIONS = 10_000_000
 IV_LENGTH = 12
 CEK_LENGTH = 32
 
@@ -200,8 +202,10 @@ def pbkdf2_wrap_cek(cek_or_share: bytes, passphrase: str, *, salt: bytes | None 
 
 def pbkdf2_unwrap_cek(wrapped: dict, passphrase: str) -> bytes:
     salt = b64decode(wrapped["salt"], field="salt")
-    iterations = wrapped.get("iterations") or PBKDF2_ITERATIONS
-    wrapping_key = _pbkdf2(passphrase, salt, int(iterations))
+    iterations = int(wrapped.get("iterations") or PBKDF2_ITERATIONS)
+    if not 1 <= iterations <= PBKDF2_MAX_ITERATIONS:
+        raise MalformedCellError("PBKDF2 iteration count out of range — refusing")
+    wrapping_key = _pbkdf2(passphrase, salt, iterations)
     return keywrap.aes_key_unwrap(wrapping_key, b64decode(wrapped["ct"], field="ct"))
 
 

@@ -685,6 +685,8 @@ def _default_unwrapper(
             for passphrase in passphrase_list:
                 try:
                     return crypto.pbkdf2_unwrap_cek(wrapped, passphrase)
+                except MalformedCellError:
+                    raise
                 except Exception:
                     continue
             return None
