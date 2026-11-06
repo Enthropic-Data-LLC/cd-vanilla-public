@@ -613,7 +613,34 @@ pub struct OpenOptions {
 /// unwraps first performs a decryption under a header it has not authenticated,
 /// and makes the user pay a 600,000-iteration PBKDF2 derivation or a hardware
 /// touch on behalf of a cell it is about to reject.
+///
+/// `expected_signer` is checked where each version's signature is verified, and
+/// once more here on the way out, whichever path produced the result, so no
+/// branch can return around it.
 pub fn open(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
+    let result = open_cell(cell, opts)?;
+    if let Some(expected) = opts.expected_signer.as_deref() {
+        let inner = cell
+            .get("version")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| INNER_SIG_VERSIONS.contains(&v));
+        let fail = |m: String| if inner { Error::SenderSignature(m) } else { Error::Signature(m) };
+        if !result.signed {
+            return Err(fail(format!(
+                "expected a cell signed by {expected}, but it carries no signature"
+            )));
+        }
+        if result.signer_fingerprint.as_deref() != Some(expected) {
+            return Err(fail(format!(
+                "cell is signed by {}, not the expected {expected}",
+                result.signer_fingerprint.as_deref().unwrap_or("nobody")
+            )));
+        }
+    }
+    Ok(result)
+}
+
+fn open_cell(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
     let version = version_of(cell)?;
     let is_legacy = cell.get("version").and_then(|v| v.as_str()).is_none()
         && cell.get("cd_version").is_some();
@@ -752,8 +779,13 @@ pub fn open(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
         None => (false, None, None),
     };
 
-    // Manifest-prefixed payload (§5), or a legacy cell with plaintext metadata.
-    if let Some(original) = cell.get("original_filename") {
+    // Manifest-prefixed payload (every supported version, §5), or the pre-spec
+    // v2.0 envelope with plaintext metadata. Those top-level fields are read for a
+    // legacy cell ONLY: nothing authenticates them, so on a supported version
+    // anyone could add one, and reading it there skipped the manifest — the v1.4
+    // sender signature and `expected_signer` with it — and let the editor choose
+    // the filename and media type.
+    if let Some(original) = cell.get("original_filename").filter(|_| is_legacy) {
         return Ok(OpenResult {
             data: plain,
             filename: original

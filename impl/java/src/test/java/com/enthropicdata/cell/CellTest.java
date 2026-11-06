@@ -6,6 +6,7 @@ package com.enthropicdata.cell;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -426,6 +427,38 @@ class CellTest {
         Cell.OpenOptions expect = keys(ALICE);
         expect.expectedSigner = ALICE.fingerprint();
         assertThrows(CellException.Signature.class, () -> Cell.open(cell, expect));
+    }
+
+    /**
+     * Top-level {@code original_filename}/{@code content_type} are legacy v2.0
+     * fields, outside {@code header_hash} and the AAD. On a supported version they
+     * used to switch {@code open} onto the plaintext-metadata path, which skipped
+     * the manifest, the inner signature and {@code expectedSigner}: an outsider's
+     * unsigned cell passed {@code expectedSigner}, and a signed one opened as
+     * unsigned.
+     */
+    @Test
+    void legacyFieldsCannotRouteAroundTheSignature() {
+        Map<String, Object> forged = sealToAlice();
+        forged.put("original_filename", "from-bob.html");
+        forged.put("content_type", "text/html");
+        Cell.OpenOptions expectBob = keys(ALICE);
+        expectBob.expectedSigner = BOB.fingerprint();
+        assertThrows(CellException.Signature.class, () -> Cell.open(forged, expectBob));
+
+        Cell.CreateOptions opts = new Cell.CreateOptions();
+        opts.sender = BOB;
+        Map<String, Object> signed = seal("signed".getBytes(), List.of(Cell.Recipient.forKey(ALICE)), opts);
+        signed.put("original_filename", "from-bob.html");
+        signed.put("content_type", "text/html");
+        Cell.OpenResult r = Cell.open(signed, keys(ALICE));
+        assertTrue(r.signed());
+        assertEquals(BOB.fingerprint(), r.signerFingerprint());
+        assertNotEquals("from-bob.html", r.filename());
+        assertNotEquals("text/html", r.contentType());
+        Cell.OpenOptions expectAlice = keys(ALICE);
+        expectAlice.expectedSigner = ALICE.fingerprint();
+        assertThrows(CellException.Signature.class, () -> Cell.open(signed, expectAlice));
     }
 
     @Test

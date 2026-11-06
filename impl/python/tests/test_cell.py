@@ -556,6 +556,28 @@ class TestV14(CellTestCase):
         with self.assertRaises(SignatureError):
             cell_open(cell, keys=[self.alice], expected_signer=self.bob.fingerprint)
 
+    def test_legacy_fields_cannot_route_around_the_signature(self):
+        # Top-level original_filename/content_type are legacy v2.0 fields, outside
+        # header_hash and the AAD. On a supported version they used to switch the
+        # opener onto the plaintext-metadata path, skipping the manifest, the inner
+        # signature and expected_signer. An outsider's unsigned cell then passed
+        # expected_signer, and a signed one opened as unsigned.
+        legacy = {"original_filename": "from-bob.html", "content_type": "text/html"}
+        forged = self.seal()
+        forged.update(legacy)
+        with self.assertRaises(SignatureError):
+            cell_open(forged, keys=[self.alice], expected_signer=self.bob.fingerprint)
+
+        signed = self.seal(recipients=[Recipient.for_key(self.alice)], sender=self.bob)
+        signed.update(legacy)
+        result = cell_open(signed, keys=[self.alice])
+        self.assertTrue(result.signed)
+        self.assertEqual(result.signer_fingerprint, self.bob.fingerprint)
+        self.assertNotEqual(result.filename, "from-bob.html")
+        self.assertNotEqual(result.content_type, "text/html")
+        with self.assertRaises(SignatureError):
+            cell_open(signed, keys=[self.alice], expected_signer="deadbeefdeadbeef")
+
     def test_signature_binds_cell_identity(self):
         for field in ("created_at", "doc_id"):
             cell = self.seal(sender=self.bob)

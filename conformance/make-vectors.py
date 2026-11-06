@@ -19,6 +19,8 @@ a version nobody actually tests.
     python3 conformance/make-vectors.py              # regenerate EVERYTHING (rarely)
     python3 conformance/make-vectors.py --add-v14    # (re)write only the v1.4 vectors,
                                                      # leaving every committed vector as is
+    python3 conformance/make-vectors.py --add-derived  # (re)write only the vectors derived
+                                                       # from committed ones (DERIVED_IDS)
 """
 
 from __future__ import annotations
@@ -396,6 +398,49 @@ def build_v14(deal_file: str, unicode_file: str) -> None:
         notes="Openers refuse the parameters (§6.5) and so recover no key from this entry.")
 
 
+#: Vectors made by editing a committed vector outside its authenticated bytes,
+#: so they re-derive deterministically from it.
+DERIVED_IDS = ("v14-legacy-fields-ignored",)
+
+
+def build_derived(deal_file: str) -> None:
+    """Edits a third party can make without any key, which a reader must not act on."""
+    signed = json.loads((VECTORS / "open" / "v14-ecdh-signed.cell").read_text(encoding="utf-8"))
+    # Top-level original_filename / content_type / original_size are fields of the
+    # pre-spec v2.0 envelope (§12), which kept its metadata outside the ciphertext.
+    # They are covered by nothing: not header_hash, not the AAD. Reading them on a
+    # supported version once switched every implementation onto the legacy
+    # plaintext path, which skipped the manifest — and with it the v1.4 sender
+    # signature and any expected-signer requirement — and handed the editor the
+    # filename and media type.
+    signed.update(original_filename="contract-final.html", content_type="text/html",
+                  original_size=1)
+    add("v14-legacy-fields-ignored", signed,
+        expect="open",
+        description="v14-ecdh-signed plus top-level original_filename/content_type/original_size, "
+                    "added by a third party; a v1.x reader ignores them",
+        open_with={"keys": ["alice"]}, plaintext=DEAL, payload_file=deal_file,
+        filename="deal.txt", content_type="text/plain", meta={"case": "2026-0417"},
+        signer="bob", must_not_open_with={"keys": ["mallory"]},
+        notes="Those three fields belong to legacy v2.0 cells (cd_version, no version) only. "
+              "On any supported version the manifest is always parsed and the inner signature "
+              "always verified; the filename, media type and signer come from inside the "
+              "ciphertext.")
+
+
+def add_derived_only() -> int:
+    """Rewrite just the derived vectors; every other committed vector stays byte-for-byte."""
+    existing = json.loads((VECTORS / "manifest.json").read_text())
+    for v in existing["vectors"]:
+        if v["id"] in DERIVED_IDS:
+            (VECTORS / v["file"]).unlink(missing_ok=True)
+    vectors.extend(v for v in existing["vectors"] if v["id"] not in DERIVED_IDS)
+    build_derived("payloads/deal.txt")
+    write_manifest()
+    print(f"wrote {len(DERIVED_IDS)} derived vector(s); manifest now holds {len(vectors)}")
+    return 0
+
+
 def write_manifest() -> None:
     manifest = {
         "version": 1,
@@ -420,6 +465,7 @@ def add_v14_only() -> int:
             (VECTORS / v["file"]).unlink(missing_ok=True)
     vectors.extend(v for v in existing["vectors"] if not is_v14(v))
     build_v14("payloads/deal.txt", "payloads/unicode.txt")
+    build_derived("payloads/deal.txt")
     write_manifest()
     added = sum(1 for v in vectors if is_v14(v))
     print(f"wrote {added} v1.4 vectors; manifest now holds {len(vectors)}")
@@ -706,12 +752,15 @@ def main() -> int:
               "wall clock: this vector expires as a test on 2100-01-01.")
 
     build_v14(deal_file, unicode_file)
+    build_derived(deal_file)
     write_manifest()
 
-    opens = sum(1 for v in vectors if v["expect"] == "open")
+    opens =sum(1 for v in vectors if v["expect"] == "open")
     print(f"wrote {len(vectors)} vectors ({opens} open, {len(vectors) - opens} reject)")
     return 0
 
 
 if __name__ == "__main__":
+    if "--add-derived" in sys.argv[1:]:
+        raise SystemExit(add_derived_only())
     raise SystemExit(add_v14_only() if "--add-v14" in sys.argv[1:] else main())

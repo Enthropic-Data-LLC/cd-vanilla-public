@@ -544,9 +544,28 @@ public final class Cell {
      * a header it has not authenticated, and makes the user pay a
      * 600,000-iteration PBKDF2 derivation or a hardware touch on behalf of a
      * cell it is about to reject.
+     *
+     * <p>{@code expectedSigner} is checked where each version's signature is
+     * verified, and once more here on the way out, whichever path produced the
+     * result, so no branch can return around it.
      */
     public static OpenResult open(Map<String, Object> cell, OpenOptions options) {
         OpenOptions opts = options == null ? new OpenOptions() : options;
+        OpenResult result = openCell(cell, opts);
+        if (opts.expectedSigner != null) {
+            if (!result.signed()) {
+                throw new CellException.Signature("expected a cell signed by "
+                        + opts.expectedSigner + ", but it carries no signature");
+            }
+            if (!opts.expectedSigner.equals(result.signerFingerprint())) {
+                throw new CellException.Signature("cell is signed by " + result.signerFingerprint()
+                        + ", not the expected " + opts.expectedSigner);
+            }
+        }
+        return result;
+    }
+
+    private static OpenResult openCell(Map<String, Object> cell, OpenOptions opts) {
         String version = versionOf(cell);
         boolean isLegacy = Json.string(cell, "version") == null
                 && Json.string(cell, "cd_version") != null;
@@ -659,8 +678,13 @@ public final class Cell {
         String signerFingerprint = verified == null ? null : verified.signerFingerprint();
         String claimedSigner = verified == null ? null : verified.claimedSigner();
 
-        // Manifest-prefixed payload (§5), or a legacy cell with plaintext metadata.
-        if (cell.containsKey("original_filename")) {
+        // Manifest-prefixed payload (every supported version, §5), or the pre-spec
+        // v2.0 envelope with plaintext metadata. Those top-level fields are read for
+        // a legacy cell ONLY: nothing authenticates them, so on a supported version
+        // anyone could add one, and reading it there skipped the manifest — the v1.4
+        // sender signature and expectedSigner with it — and let the editor choose
+        // the filename and media type.
+        if (isLegacy && cell.containsKey("original_filename")) {
             return new OpenResult(plain,
                     orDefault(Json.string(cell, "original_filename"), "decrypted"),
                     orDefault(Json.string(cell, "content_type"), "application/octet-stream"),

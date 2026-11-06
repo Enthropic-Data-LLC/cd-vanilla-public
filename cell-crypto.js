@@ -1263,9 +1263,14 @@ async function cellOpen(cell, tryDecryptFn) {
   const compressed = PADDED_VERSIONS.has(fmtVersion) ? unpadBody(decrypted) : decrypted;
   const plain = await gunzip(compressed);
 
-  // Manifest-prefixed payload (v1.0) vs legacy cells that had plaintext metadata
+  // Manifest-prefixed payload (every supported version, §5) vs the pre-spec
+  // v2.0 envelope, which kept its metadata in plaintext. Those top-level fields
+  // are read for a legacy cell ONLY. Nothing authenticates them, so on a
+  // supported version anyone could add one; reading it there skipped the
+  // manifest, the v1.4 sender signature with it, and let the editor choose the
+  // filename and media type.
   let filename, contentType, fileBytes, meta = null;
-  if (cell.original_filename !== undefined) {
+  if (isLegacy && cell.original_filename !== undefined) {
     filename    = cell.original_filename ?? cell.doc_id ?? 'decrypted';
     contentType = cell.content_type ?? 'application/octet-stream';
     fileBytes   = plain;

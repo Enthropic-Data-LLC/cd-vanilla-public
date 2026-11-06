@@ -393,6 +393,45 @@ fn v14_signature_is_inside_the_payload() {
     assert!(matches!(open(&cell, &opts), Err(Error::SenderSignature(_))));
 }
 
+/// Top-level `original_filename`/`content_type` are legacy v2.0 fields, outside
+/// `header_hash` and the AAD. On a supported version they used to switch `open`
+/// onto the plaintext-metadata path, which skipped the manifest, the inner
+/// signature and `expected_signer`: an outsider's unsigned cell passed
+/// `expected_signer`, and a signed one opened as unsigned.
+#[test]
+fn legacy_fields_cannot_route_around_the_signature() {
+    let alice = KeyRecord::generate("Alice");
+    let bob = KeyRecord::generate("Bob");
+    let add_legacy = |cell: &mut Value| {
+        cell["original_filename"] = json!("from-bob.html");
+        cell["content_type"] = json!("text/html");
+    };
+    let mut forged = seal(
+        b"forged",
+        &[Recipient::for_key(&alice).unwrap()],
+        CreateOptions::default(),
+    );
+    add_legacy(&mut forged);
+    let mut expect_bob = keys_for(&[&alice]);
+    expect_bob.expected_signer = Some(bob.fingerprint().unwrap());
+    assert!(matches!(open(&forged, &expect_bob), Err(Error::SenderSignature(_))));
+
+    let mut signed = seal(
+        b"signed",
+        &[Recipient::for_key(&alice).unwrap()],
+        CreateOptions { sender: Some(bob.clone()), ..Default::default() },
+    );
+    add_legacy(&mut signed);
+    let r = open(&signed, &keys_for(&[&alice])).unwrap();
+    assert!(r.signed);
+    assert_eq!(r.signer_fingerprint, Some(bob.fingerprint().unwrap()));
+    assert_ne!(r.filename, "from-bob.html");
+    assert_ne!(r.content_type, "text/html");
+    let mut expect_alice = keys_for(&[&alice]);
+    expect_alice.expected_signer = Some(alice.fingerprint().unwrap());
+    assert!(matches!(open(&signed, &expect_alice), Err(Error::SenderSignature(_))));
+}
+
 #[test]
 fn v14_version_is_authenticated_and_body_is_padded() {
     let alice = KeyRecord::generate("Alice");

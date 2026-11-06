@@ -537,6 +537,36 @@ func TestV14InnerSignature(t *testing.T) {
 	}
 }
 
+// Top-level original_filename/content_type are legacy v2.0 fields, outside
+// header_hash and the AAD. On a supported version they used to switch Open onto
+// the plaintext-metadata path, which skipped the manifest, the inner signature
+// and ExpectedSigner: an outsider's unsigned cell passed ExpectedSigner, and a
+// signed one opened as unsigned.
+func TestLegacyFieldsCannotRouteAroundTheSignature(t *testing.T) {
+	alice, bob := mustKey(t, "Alice"), mustKey(t, "Bob")
+	addLegacy := func(c *cell.Object) {
+		c.Set("original_filename", "from-bob.html")
+		c.Set("content_type", "text/html")
+	}
+	forged := seal(t, []byte("forged"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{})
+	addLegacy(forged)
+	if _, err := cell.Open(forged, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}, ExpectedSigner: bob.Fingerprint()}); !errors.Is(err, cell.ErrSenderSignature) {
+		t.Fatalf("unsigned cell with legacy fields passed ExpectedSigner: %v", err)
+	}
+	signed := seal(t, []byte("signed"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob})
+	addLegacy(signed)
+	r, err := cell.Open(signed, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}})
+	if err != nil || !r.Signed || r.SignerFingerprint != bob.Fingerprint() {
+		t.Fatalf("signed cell with legacy fields: %v signed=%v", err, r != nil && r.Signed)
+	}
+	if r.Filename == "from-bob.html" || r.ContentType == "text/html" {
+		t.Fatalf("legacy fields were read: %q %q", r.Filename, r.ContentType)
+	}
+	if _, err := cell.Open(signed, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}, ExpectedSigner: alice.Fingerprint()}); !errors.Is(err, cell.ErrSenderSignature) {
+		t.Fatalf("wrong expected signer: %v", err)
+	}
+}
+
 func TestV14VersionAuthenticatedAndPadded(t *testing.T) {
 	alice := mustKey(t, "Alice")
 	c := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{})

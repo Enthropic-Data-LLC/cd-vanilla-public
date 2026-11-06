@@ -580,8 +580,14 @@ def _cell_open(
     compressed = crypto.unpad_body(decrypted) if version in PADDED_VERSIONS else decrypted
     plain = crypto.gzip_decompress(compressed)
 
-    # ── Manifest-prefixed payload (§5), or a legacy cell with plaintext metadata.
-    if cell.get("original_filename") is not None:
+    # ── Manifest-prefixed payload (every supported version, §5), or the pre-spec
+    # v2.0 envelope with plaintext metadata. Those top-level fields are read for a
+    # legacy cell ONLY: nothing authenticates them, so on a supported version
+    # anyone could add one, and reading it there skipped the manifest — the v1.4
+    # sender signature and expected_signer with it — and let the editor choose the
+    # filename and media type.
+    signed_to: list | None = None
+    if is_legacy and cell.get("original_filename") is not None:
         filename = cell.get("original_filename") or cell.get("doc_id") or "decrypted"
         content_type = cell.get("content_type") or "application/octet-stream"
         data, file_meta = plain, None
@@ -617,17 +623,12 @@ def _cell_open(
                                            b64decode(sender["sig"], field="sender.sig"), sig_input):
                     raise SignatureError("sender signature invalid — cell may be forged")
                 signer = crypto.fingerprint(spki_der)
-                if expected_signer is not None and signer != expected_signer:
-                    raise SignatureError(f"cell is signed by {signer}, not the expected {expected_signer}")
-                return OpenResult(
-                    data=data, filename=filename, content_type=content_type, meta=file_meta,
-                    used_recipient=used_recipient, signed=True, signer_fingerprint=signer,
-                    claimed_signer=None, lifetime=lt, signed_to=list(sender["to"]),
-                )
-            if expected_signer is not None:
-                raise SignatureError(f"expected a cell signed by {expected_signer}, but it carries no signature")
+                verified = VerifyResult(version=version, header_hash_ok=True,
+                                        payload_hash_ok=verified.payload_hash_ok if verified else False,
+                                        signed=True, signer_fingerprint=signer, claimed_signer=None)
+                signed_to = list(sender["to"])
 
-    return OpenResult(
+    result = OpenResult(
         data=data,
         filename=filename,
         content_type=content_type,
@@ -637,7 +638,17 @@ def _cell_open(
         signer_fingerprint=verified.signer_fingerprint if verified else None,
         claimed_signer=verified.claimed_signer if verified else None,
         lifetime=lt,
+        signed_to=signed_to,
     )
+    # One exit, one check: whichever path produced the result, a required signer is
+    # enforced here, so no branch can return around it.
+    if expected_signer is not None:
+        if not result.signed:
+            raise SignatureError(f"expected a cell signed by {expected_signer}, but it carries no signature")
+        if result.signer_fingerprint != expected_signer:
+            raise SignatureError(
+                f"cell is signed by {result.signer_fingerprint}, not the expected {expected_signer}")
+    return result
 
 
 def _default_unwrapper(

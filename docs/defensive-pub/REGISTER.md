@@ -148,14 +148,14 @@ public in this repository on 2026-10-31.
 Block 972397: merkle root `3616ab4dc0b58b25a94f7d9d40129b90ea1bcd99284df921b12b1c2d41e1801b`,
 mined 2026-10-21 00:35:33 UTC. Frozen copies and proofs: `docs/defensive-pub/anchors/v1.4/`.
 
-### Live files and their root proofs — 2026-10-31
+### Live files and their root proofs — updated 2026-11-05
 
 The `.ots` file beside each live file is the proof for *those* bytes:
 
 | Live file | SHA-256 | Root proof |
 |---|---|---|
 | `docs/SPEC.md` | `35d2883e…300974f8` | the v1.4 proof above — the file is byte-identical to `anchors/v1.4/SPEC.md` |
-| `cell-crypto.js` | `1c1b8371c26355ecaae07e6f0225f952e13a457925d477ef1d08ad19aa3e2484` | stamped 2026-10-31 — **pending**; no block is claimed until `ots upgrade` confirms one |
+| `cell-crypto.js` | `191ed2b0ce29cff1e7750e27e766666ff900fa938210b72b2c1e8e785b818bcb` | stamped 2026-11-05 — **pending**; no block is claimed until `ots upgrade` confirms one |
 | `docs/DEFENSIVE-PUBLISHING-GUIDE.md` | `6d97cc4e…7dd95ee0` | the v1.2 proof |
 
 `cell-crypto.js` is v1.4 plus one implementation hardening, and is **no longer
@@ -166,6 +166,21 @@ make an opener run billions of iterations. There is no format change and no cell
 ever written is affected; the Python, Go, Rust and Java ports adopted the same
 ceiling the same day. The mechanisms' priority still dates from the v1.4 anchor —
 this stamp only dates these bytes.
+
+Second hardening, 2026-11-05: an opener now reads the top-level
+`original_filename`, `content_type` and `original_size` fields **only** for a
+legacy v2.0 cell, which predates the manifest. Before this, adding those fields
+to any spec-version cell made the opener take the legacy path, which skipped the
+manifest and with it the v1.4 inner sender signature — so a signed cell could be
+re-labelled, and opened as unsigned, without any error. Those fields are outside
+the AEAD and `header_hash` is unkeyed, so anyone holding the file could add them.
+No format change; no cell ever written is affected. The Python, Go, Rust and
+Java ports were fixed the same day, an expected signer is now enforced at the
+single exit of `open()` in each port, and conformance vector
+`v14-legacy-fields-ignored` pins the behaviour.
+
+Superseded root proof, not to be cited: `1c1b8371…` (the 2026-10-31 bytes). Its
+pending proof is in git history at commit `8619a65`.
 
 When the v1.4 files were merged here on 2026-10-31, the root proofs for
 `docs/SPEC.md` and `cell-crypto.js` still described v1.3-era bytes; the v1.4

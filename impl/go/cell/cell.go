@@ -614,7 +614,31 @@ type OpenOptions struct {
 // performs a decryption under a header it has not authenticated, and makes the
 // user pay a 600,000-iteration PBKDF2 derivation or a hardware touch on behalf
 // of a cell it is about to reject.
+//
+// ExpectedSigner is checked where each version's signature is verified, and
+// once more here on the way out, whichever path produced the result, so no
+// branch can return around it.
 func Open(c *Object, opts OpenOptions) (*OpenResult, error) {
+	result, err := openCell(c, opts)
+	if err != nil {
+		return nil, err
+	}
+	if opts.ExpectedSigner != "" {
+		errKind := ErrSignature
+		if InnerSigVersions[c.GetString("version")] {
+			errKind = ErrSenderSignature
+		}
+		if !result.Signed {
+			return nil, fmt.Errorf("%w: expected a cell signed by %s, but it carries no signature", errKind, opts.ExpectedSigner)
+		}
+		if result.SignerFingerprint != opts.ExpectedSigner {
+			return nil, fmt.Errorf("%w: cell is signed by %s, not the expected %s", errKind, result.SignerFingerprint, opts.ExpectedSigner)
+		}
+	}
+	return result, nil
+}
+
+func openCell(c *Object, opts OpenOptions) (*OpenResult, error) {
 	version, err := versionOf(c)
 	if err != nil {
 		return nil, err
@@ -757,8 +781,13 @@ func Open(c *Object, opts OpenOptions) (*OpenResult, error) {
 		result.ClaimedSigner = verified.ClaimedSigner
 	}
 
-	// Manifest-prefixed payload (§5), or a legacy cell with plaintext metadata.
-	if c.Has("original_filename") {
+	// Manifest-prefixed payload (every supported version, §5), or the pre-spec
+	// v2.0 envelope with plaintext metadata. Those top-level fields are read for a
+	// legacy cell ONLY: nothing authenticates them, so on a supported version
+	// anyone could add one, and reading it there skipped the manifest — the v1.4
+	// sender signature and ExpectedSigner with it — and let the editor choose the
+	// filename and media type.
+	if isLegacy && c.Has("original_filename") {
 		result.Filename = orDefault(c.GetString("original_filename"), c.GetString("doc_id"), "decrypted")
 		result.ContentType = orDefault(c.GetString("content_type"), "application/octet-stream")
 		result.Data = plain

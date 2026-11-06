@@ -869,6 +869,36 @@
       "reject_reason": "no-matching-key",
       "reject_at_step": 4,
       "notes": "Openers refuse the parameters (§6.5) and so recover no key from this entry."
+    },
+    {
+      "id": "v14-legacy-fields-ignored",
+      "file": "open/v14-legacy-fields-ignored.cell",
+      "description": "v14-ecdh-signed plus top-level original_filename/content_type/original_size, added by a third party; a v1.x reader ignores them",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.4",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "meta": {
+        "case": "2026-0417"
+      },
+      "signer": "bob",
+      "must_not_open_with": {
+        "keys": [
+          "mallory"
+        ]
+      },
+      "notes": "Those three fields belong to legacy v2.0 cells (cd_version, no version) only. On any supported version the manifest is always parsed and the inner signature always verified; the filename, media type and signer come from inside the ciphertext."
     }
   ]
 }

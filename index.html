@@ -688,6 +688,9 @@ async function renderOpen(app) {
   const fmtVersion = c.version ?? c.cd_version ?? 'unknown';
   const isLegacy   = !c.version && c.cd_version;
   const policy     = c.header?.policy;
+  // original_filename / content_type / original_size are legacy v2.0 fields,
+  // authenticated by nothing. On a supported version the real values are inside
+  // the ciphertext, so anything found here is someone else's edit: never show it.
   app.innerHTML = `
     <div class="page-header">
       <button class="btn btn-secondary btn-sm" onclick="go('home')">← Back</button>
@@ -698,9 +701,9 @@ async function renderOpen(app) {
         <div class="card">
           <h3>Cell metadata</h3>
           <table class="meta-table">
-            <tr><td>File</td><td><strong>${c.original_filename ? esc(c.original_filename) : '<span style="color:#aaa;font-style:italic">🔒 encrypted</span>'}</strong></td></tr>
-            <tr><td>Type</td><td>${c.content_type ? esc(c.content_type) : '<span style="color:#aaa;font-style:italic">🔒 encrypted</span>'}</td></tr>
-            <tr><td>Size</td><td>${c.original_size ? fmtBytes(c.original_size) : '<span style="color:#aaa;font-style:italic">🔒 encrypted</span>'}</td></tr>
+            <tr><td>File</td><td><strong>${isLegacy && c.original_filename ? esc(c.original_filename) : '<span style="color:#aaa;font-style:italic">🔒 encrypted</span>'}</strong></td></tr>
+            <tr><td>Type</td><td>${isLegacy && c.content_type ? esc(c.content_type) : '<span style="color:#aaa;font-style:italic">🔒 encrypted</span>'}</td></tr>
+            <tr><td>Size</td><td>${isLegacy && c.original_size ? fmtBytes(c.original_size) : '<span style="color:#aaa;font-style:italic">🔒 encrypted</span>'}</td></tr>
             <tr><td>Lifetime</td><td>${formatLifetime(c.header?.lifetime)}</td></tr>
             <tr><td>Encryption</td><td>${esc(c.payload?.alg || c.encrypted_body?.alg || 'AES-256-GCM')}</td></tr>
             <tr><td>Created</td><td>${c.created_at ? fmtDate(c.created_at) : '—'}</td></tr>
