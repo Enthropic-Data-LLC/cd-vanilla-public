@@ -368,7 +368,7 @@ async function renderEncrypt(app) {
             <div class="file-icon">${fileIcon(_encFile.type)}</div>
             <div>
               <div class="file-name">${esc(_encFile.name)}</div>
-              <div class="file-meta">${fmtBytes(_encFile.size)} · ${_encFile.type || 'unknown type'}</div>
+              <div class="file-meta">${fmtBytes(_encFile.size)} · ${esc(_encFile.type || 'unknown type')}</div>
             </div>
           </div>
         </div>
@@ -683,8 +683,11 @@ async function doEncrypt() {
 async function renderOpen(app) {
   const c = _openCell;
   const accessMap  = c.header?.access_map ?? c.recipients ?? [];
-  const threshold  = c.header?.threshold?.required ?? 1;
-  const docId      = c.doc_id || c.cell_id || '';
+  // Everything below comes from the file, before any check: anyone who can hand
+  // the user a .cell controls it. Escape every string; numbers must be numbers.
+  const thrReq     = c.header?.threshold?.required;
+  const threshold  = Number.isInteger(thrReq) && thrReq > 0 ? thrReq : 1;
+  const docId      = String(c.doc_id || c.cell_id || '');
   const fmtVersion = c.version ?? c.cd_version ?? 'unknown';
   const isLegacy   = !c.version && c.cd_version;
   const policy     = c.header?.policy;
@@ -703,7 +706,7 @@ async function renderOpen(app) {
           <table class="meta-table">
             <tr><td>File</td><td><strong>${isLegacy && c.original_filename ? esc(c.original_filename) : '<span style="color:#aaa;font-style:italic">🔒 encrypted</span>'}</strong></td></tr>
             <tr><td>Type</td><td>${isLegacy && c.content_type ? esc(c.content_type) : '<span style="color:#aaa;font-style:italic">🔒 encrypted</span>'}</td></tr>
-            <tr><td>Size</td><td>${isLegacy && c.original_size ? fmtBytes(c.original_size) : '<span style="color:#aaa;font-style:italic">🔒 encrypted</span>'}</td></tr>
+            <tr><td>Size</td><td>${isLegacy && c.original_size ? esc(fmtBytes(Number(c.original_size))) : '<span style="color:#aaa;font-style:italic">🔒 encrypted</span>'}</td></tr>
             <tr><td>Lifetime</td><td>${formatLifetime(c.header?.lifetime)}</td></tr>
             <tr><td>Encryption</td><td>${esc(c.payload?.alg || c.encrypted_body?.alg || 'AES-256-GCM')}</td></tr>
             <tr><td>Created</td><td>${c.created_at ? fmtDate(c.created_at) : '—'}</td></tr>
@@ -713,8 +716,8 @@ async function renderOpen(app) {
             ${policy?.created_on_origin ? `<tr><td>Origin</td><td style="font-size:0.8rem">${esc(policy.created_on_origin)}</td></tr>` : ''}
             <tr><td>Integrity</td><td>${c.header_hash ? '✅ hash chain' : '⚠️ no hash (legacy)'}</td></tr>
             <tr><td>Signed by</td><td>${c.header_sig ? `<span style="font-family:monospace;font-size:0.78rem">${esc(c.header_sig_by || '?')}</span>` : (c.version === '1.4' ? '<span style="color:#aaa;font-style:italic">🔒 inside the ciphertext, if signed</span>' : '—')}</td></tr>
-            ${c.header?.prev_hash ? `<tr><td>Prev cell</td><td style="font-family:monospace;font-size:0.72rem" title="${esc(c.header.prev_hash)}">🔗 ${esc(c.header.prev_hash.slice(0,24))}…</td></tr>` : ''}
-            <tr><td>Doc ID</td><td style="font-family:monospace;font-size:0.72rem">${docId.slice(0,18)}…</td></tr>
+            ${c.header?.prev_hash ? `<tr><td>Prev cell</td><td style="font-family:monospace;font-size:0.72rem" title="${esc(c.header.prev_hash)}">🔗 ${esc(String(c.header.prev_hash).slice(0,24))}…</td></tr>` : ''}
+            <tr><td>Doc ID</td><td style="font-family:monospace;font-size:0.72rem">${esc(docId.slice(0,18))}…</td></tr>
             <tr><td>Version</td><td>${esc(c.version || c.cd_version || '—')}</td></tr>
           </table>
         </div>
@@ -726,7 +729,7 @@ async function renderOpen(app) {
               <span class="recipient-icon">${methodIcon(r.method)}</span>
               <div>
                 <div style="font-weight:600;font-size:0.9rem">${esc(r.label || methodLabel(r.method))}</div>
-                <div style="font-size:0.75rem;color:#888;font-family:monospace">${r.fingerprint ? esc(methodLabel(r.method)) + ' · ' + esc(r.fingerprint) : 'no fingerprint, no label — found by trial decryption'}${r.share_index != null ? ' · share #' + r.share_index : ''}</div>
+                <div style="font-size:0.75rem;color:#888;font-family:monospace">${r.fingerprint ? esc(methodLabel(r.method)) + ' · ' + esc(r.fingerprint) : 'no fingerprint, no label — found by trial decryption'}${Number.isInteger(r.share_index) ? ' · share #' + r.share_index : ''}</div>
               </div>
             </div>`).join('')}
         </div>
@@ -766,8 +769,9 @@ async function sigNoteFor(result) {
   if (!result.sigVerified) return '';
   const realFp = result.sigKey ? await fp(result.sigKey) : null;
   const signer = await resolveSigner(result.sigKey);
-  if (signer) return ` · ✍️ signed by ${esc(signer.label)} (${esc(realFp || '')})`;
-  return ` · ⚠️ signed by UNKNOWN key ${esc(realFp || '?')} — not in your keychain/contacts`;
+  // Shown with showAlert(), i.e. textContent: plain text, nothing to escape.
+  if (signer) return ` · ✍️ signed by ${signer.label} (${realFp || ''})`;
+  return ` · ⚠️ signed by UNKNOWN key ${realFp || '?'} — not in your keychain/contacts`;
 }
 
 async function openWithKeychain() {
@@ -790,7 +794,7 @@ async function openWithKeychain() {
       return null;
     });
     const sigNote = await sigNoteFor(result);
-    showAlert('open-status', `✅ Decrypted with "${esc(result.usedRecipient?.label || usedKey?.label || 'keychain key')}"${sigNote}`, 'success');
+    showAlert('open-status', `✅ Decrypted with "${result.usedRecipient?.label || usedKey?.label || 'keychain key'}"${sigNote}`, 'success');
     dlBytes(result.bytes, result.filename, result.contentType);
     _showReencrypt(result);
   } catch (e) { showAlert('open-status', '❌ ' + e.message, 'error'); }
@@ -882,7 +886,7 @@ async function openConfirmKeyFile() {
     });
     closeModal();
     const sigNote = await sigNoteFor(result);
-    showAlert('open-status', `✅ Decrypted with "${esc(label)}"${sigNote}`, 'success');
+    showAlert('open-status', `✅ Decrypted with "${label}"${sigNote}`, 'success');
     dlBytes(result.bytes, result.filename, result.contentType);
     _showReencrypt(result);
   } catch (e) { err.textContent='Failed: ' + e.message; err.style.display='block'; }

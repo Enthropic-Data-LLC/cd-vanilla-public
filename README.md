@@ -27,7 +27,7 @@ Or open `index.html` directly in Chrome/Edge (file:// works for WebCrypto in mos
 | YubiKey | FIDO2 PRF extension (YubiKey 5 series, HTTPS only) |
 | Quorum | M-of-N Shamir Secret Sharing over GF(256) |
 | Metadata | Filename, type, size, and optional sender `meta` encrypted inside payload |
-| Tamper detection | SHA-256 `payload_hash` + `header_hash` audit chain |
+| Tamper detection | AES-GCM tag over the ciphertext and the AAD-bound metadata. `header_hash` and `payload_hash` (SHA-256, unkeyed) catch corruption, not a deliberate edit: in v1.4 nothing authenticates `access_map` against someone who can rewrite the file |
 | Authenticity | Optional ECDSA P-256 sender signature — inside the encrypted manifest from v1.4 (over the header up to v1.3) |
 | Privacy (v1.4) | Blind access-map entries found by trial decryption; Padmé-padded body; format version authenticated in the AAD |
 | Lineage | `prev_hash` chain for Mitosis (re-encrypt / key rotation) |

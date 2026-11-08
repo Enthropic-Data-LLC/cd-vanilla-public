@@ -152,6 +152,23 @@ test('Shamir', '3-of-3: all 3 shares reconstruct correctly', () => {
   for (let i = 0; i < 32; i++) eq(r[i], s[i], `byte[${i}]`);
 });
 
+test('Shamir', 'more than 255 shares is refused (share #256 would be the secret itself)', async () => {
+  const s = w.crypto.getRandomValues(new Uint8Array(32));
+  await rejects(() => w.shamirSplit(s, 256, 200), 'at most 255');
+  await rejects(() => w.shamirSplit(s, 3, 4), 'at most 255');
+  await rejects(() => w.shamirSplit(s, 3, 0), 'at most 255');
+});
+
+test('Shamir', '255 shares: indices 1..255, no share equals the secret, any 2 of a 2-of-255 reconstruct', () => {
+  const s = w.crypto.getRandomValues(new Uint8Array(32));
+  const shares = w.shamirSplit(s, 255, 2);
+  eq(shares.length, 255);
+  eq(shares[254].x, 255);
+  for (const sh of shares) assert(sh.data.some((b, i) => b !== s[i]), `share #${sh.x} equals the secret`);
+  const r = w.shamirCombine([shares[254], shares[0]]);
+  for (let i = 0; i < 32; i++) eq(r[i], s[i], `byte[${i}]`);
+});
+
 // ─── Cell round-trips ────────────────────────────────────────────────────────
 
 test('CellCreate/Open', 'ECDH: basic encrypt → decrypt round-trip', async () => {
@@ -162,6 +179,13 @@ test('CellCreate/Open', 'ECDH: basic encrypt → decrypt round-trip', async () =
   eq(new TextDecoder().decode(result.bytes), 'hello cellular defense');
   eq(result.filename, 'test.txt');
   eq(result.contentType, 'text/plain');
+});
+
+test('CellCreate/Open', 'more recipients than an opener accepts is refused before encrypting', async () => {
+  const rec = { method: 'pbkdf2', label: 'pw', passphrase: 'correcthorsebatterystaple' };
+  const file = mkFile('x', 'x.txt', 'text/plain');
+  await rejects(() => w.cellCreate(file, Array(257).fill(rec)), 'too many recipients');
+  await rejects(() => w.cellCreate(file, Array(256).fill(rec), { threshold: 200 }), 'at most 255');
 });
 
 test('CellCreate/Open', 'PBKDF2: passphrase encrypt → decrypt round-trip', async () => {

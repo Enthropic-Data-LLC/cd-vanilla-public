@@ -49,8 +49,12 @@ function fmtDate(ts) {
   return new Date(ts * 1000).toLocaleString('en-US',
     { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
+// Escape for HTML text and for quoted attribute values. Quotes matter: a value
+// placed in title="…" or value="…" could otherwise close the attribute and add
+// its own (an event handler, autofocus).
 function esc(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 // Escape for a single-quoted JS string embedded in a double-quoted HTML attribute (e.g. onclick="fn('${jsq(x)}')").
 // JS-string escaping first, then HTML-attribute escaping, so neither layer can be broken out of.
@@ -213,6 +217,10 @@ function gfInv(x) {
   return r;
 }
 function shamirSplit(secret, n, k) {
+  // Share x-coordinates are 1..n in GF(256). x = 256 would be read as 0, and the
+  // share at x = 0 is the secret itself, so at most 255 shares can be made.
+  if (!Number.isInteger(n) || !Number.isInteger(k) || k < 1 || n < k || n > 255)
+    throw new Error(`Invalid quorum ${k}-of-${n} — at most 255 shares`);
   const shares = Array.from({length: n}, (_, i) => ({ x: i + 1, data: new Uint8Array(secret.length) }));
   for (let bi = 0; bi < secret.length; bi++) {
     const c = new Uint8Array(k);
@@ -1050,6 +1058,9 @@ async function cellCreate(file, recipients, options = {}) {
   if (!SUPPORTED_VERSIONS.has(version) || !CANONICAL_VERSIONS.has(version))
     throw new Error(`cellCreate writes v1.2 and later only, not "${version}"`);
   const threshold = Math.max(1, Math.min(options.threshold || 1, Math.max(recipients.length, 1)));
+  // An opener refuses more entries than this, so such a cell could never be opened.
+  if (recipients.length > MAX_ACCESS_ENTRIES)
+    throw new Error(`Too many recipients (${recipients.length} > ${MAX_ACCESS_ENTRIES})`);
   const raw  = new Uint8Array(await file.arrayBuffer());
   const docId = ulid(), createdAt = Math.floor(Date.now() / 1000);
 

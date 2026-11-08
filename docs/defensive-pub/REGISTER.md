@@ -148,18 +148,18 @@ public in this repository on 2026-10-31.
 Block 972397: merkle root `3616ab4dc0b58b25a94f7d9d40129b90ea1bcd99284df921b12b1c2d41e1801b`,
 mined 2026-10-21 00:35:33 UTC. Frozen copies and proofs: `docs/defensive-pub/anchors/v1.4/`.
 
-### Live files and their root proofs — updated 2026-11-05
+### Live files and their root proofs — updated 2026-11-08
 
 The `.ots` file beside each live file is the proof for *those* bytes:
 
 | Live file | SHA-256 | Root proof |
 |---|---|---|
 | `docs/SPEC.md` | `35d2883e…300974f8` | the v1.4 proof above — the file is byte-identical to `anchors/v1.4/SPEC.md` |
-| `cell-crypto.js` | `191ed2b0ce29cff1e7750e27e766666ff900fa938210b72b2c1e8e785b818bcb` | stamped 2026-11-05 — **pending**; no block is claimed until `ots upgrade` confirms one |
+| `cell-crypto.js` | `efa0a4f82f56c727c5507d2cc35577af698c79405ddf12d6ae357d2016bd2311` | stamped 2026-11-08 — **pending**; no block is claimed until `ots upgrade` confirms one |
 | `docs/DEFENSIVE-PUBLISHING-GUIDE.md` | `6d97cc4e…7dd95ee0` | the v1.2 proof |
 
-`cell-crypto.js` is v1.4 plus one implementation hardening, and is **no longer
-byte-identical to the v1.4 anchor**: an opener now refuses a PBKDF2 entry whose
+`cell-crypto.js` is v1.4 plus three implementation hardenings, and is **no longer
+byte-identical to the v1.4 anchor**. First, 2026-10-31: an opener refuses a PBKDF2 entry whose
 iteration count exceeds 10,000,000 instead of deriving with it. The count is read
 from the file and `header_hash` is unkeyed, so before this an edited entry could
 make an opener run billions of iterations. There is no format change and no cell
@@ -179,8 +179,18 @@ Java ports were fixed the same day, an expected signer is now enforced at the
 single exit of `open()` in each port, and conformance vector
 `v14-legacy-fields-ignored` pins the behaviour.
 
-Superseded root proof, not to be cited: `1c1b8371…` (the 2026-10-31 bytes). Its
-pending proof is in git history at commit `8619a65`.
+Third hardening, 2026-11-08: the writer refuses a quorum of more than 255
+shares, and more recipients than an opener accepts (256). Shamir share indices
+are elements of GF(256), so a 256th share would sit at x = 0, which is the content
+key itself; the Python, Go, Rust and Java writers already refused. `esc()`, the
+HTML escaper the demo page takes from this file, now escapes quotes as well, so
+a value from a file cannot close an attribute. No format change. Quorum cells of
+up to 255 recipients, which is every quorum cell the other four implementations
+can write, are unaffected.
+
+Superseded root proofs, not to be cited: `1c1b8371…` (the 2026-10-31 bytes; its
+pending proof is in git history at commit `8619a65`) and `191ed2b0…` (the
+2026-11-05 bytes; at commit `aa67581`).
 
 When the v1.4 files were merged here on 2026-10-31, the root proofs for
 `docs/SPEC.md` and `cell-crypto.js` still described v1.3-era bytes; the v1.4
