@@ -19,7 +19,7 @@ their Author FAQ gives up to 72 hours where revisions are requested.
 | 2026-08-15 | **Replaced**, reason given to the editors: *"Removed internal use checklist."* The file now on record is the clean 8-page PDF whose digest is below. |
 
 The underlying cause is fixed rather than papered over: the checklist no longer lives in
-the submission document at all. It moved to `../DP-001-prefiling-checklist.md`, and
+the submission document at all. It moved out of the document, into a private pre-filing checklist, and
 `../DP-001-tdcommons-submission.md` is byte-identical to the filed artifact — so uploading
 straight from the repository can no longer reproduce this.
 
