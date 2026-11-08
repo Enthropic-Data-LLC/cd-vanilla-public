@@ -2,6 +2,8 @@
 
 Browser-native zero-knowledge encrypted document format. Single HTML file, no dependencies, no server round-trips for crypto.
 
+**Live demo:** <https://vnlla.cellulardefense.net> — the code in this repo, running in your browser. Nothing is uploaded.
+
 ## What it does
 
 Encrypts any file into a self-contained `.cell` or `.celz` envelope. Recipients decrypt in their browser using a key from their keychain, a passphrase, or a YubiKey. The server (if any) stores only ciphertext — it cannot read the file, the filename, the MIME type, or the file size.
