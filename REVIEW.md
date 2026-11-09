@@ -58,6 +58,7 @@ npm test                                                  # JS reference + 52 ve
 (cd impl/rust && cargo test --release)
 (cd impl/java && mvn test)
 python3 tools/interop-matrix.py                           # seal with each, open with every other
+python3 tools/check-proofs.py                             # each .ots still covers its file
 python3 tools/verify-cell.py conformance/vectors/open/v14-ecdh-signed.cell
 ```
 

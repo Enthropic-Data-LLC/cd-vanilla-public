@@ -1,0 +1,133 @@
+# Every implementation's tests, the shared conformance vectors, the interop
+# matrix and the timestamp proofs, on every push and pull request.
+#
+# The public demo (vnlla.cellulardefense.net) deploys a master commit only
+# after this workflow has passed on it. That deploy is pulled from our side;
+# no credential for any server is stored in this repository.
+#
+# Actions are pinned to full commit SHAs, with the release named beside each.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  reference:
+    name: JavaScript reference, vectors, demo render, proofs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+      - name: npm test (reference, conformance vectors, render)
+        run: npm test
+      - name: Timestamp proofs match their files
+        run: python3 tools/check-proofs.py
+
+  python:
+    name: Python port
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20 # the differential tests open cells with cell-crypto.js
+      - run: pip install "cryptography>=42.0" "argon2-cffi>=21.2"
+      - working-directory: impl/python
+        run: python -m unittest discover -s tests -t .
+
+  go:
+    name: Go port
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: impl/go/go.mod
+          cache-dependency-path: impl/go/go.sum
+      - working-directory: impl/go
+        run: go test ./...
+
+  rust:
+    name: Rust port
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - working-directory: impl/rust
+        run: cargo test --release --locked
+
+  java:
+    name: Java port
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          cache-dependency-path: impl/java/pom.xml
+      - working-directory: impl/java
+        run: mvn -B -q test
+
+  interop:
+    name: Interop matrix (seal with each, open with every other)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: impl/go/go.mod
+          cache-dependency-path: impl/go/go.sum
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          cache-dependency-path: impl/java/pom.xml
+      - run: pip install "cryptography>=42.0" "argon2-cffi>=21.2"
+      - name: Build the Go, Rust and Java command-line tools
+        run: |
+          (cd impl/go && go build -o "$RUNNER_TEMP/cdcell-go" ./cmd/cdcell)
+          (cd impl/rust && cargo build --release --locked)
+          (cd impl/java && mvn -B -q package -DskipTests)
+      - name: Interop matrix
+        run: PYTHONPATH=impl/python python3 tools/interop-matrix.py --go "$RUNNER_TEMP/cdcell-go"

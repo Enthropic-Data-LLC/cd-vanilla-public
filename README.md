@@ -115,6 +115,12 @@ Or headless, which is what CI and the figure tooling use:
 npm test          # 72/72, 2 hardware-skipped, plus the 52 conformance vectors
 ```
 
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all five
+implementations' tests, the conformance vectors, the interop matrix and
+`tools/check-proofs.py` (every timestamp proof still covers its file) on each
+push. The live demo is deployed from `master` only after CI has passed on that
+commit.
+
 ## Format specification
 
 Full spec: [`docs/SPEC.md`](docs/SPEC.md) — **v1.4**, and normative. **Not independently audited** — see [`REVIEW.md`](REVIEW.md). The format is a
