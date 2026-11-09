@@ -155,10 +155,10 @@ The `.ots` file beside each live file is the proof for *those* bytes:
 | Live file | SHA-256 | Root proof |
 |---|---|---|
 | `docs/SPEC.md` | `35d2883e…300974f8` | the v1.4 proof above — the file is byte-identical to `anchors/v1.4/SPEC.md` |
-| `cell-crypto.js` | `efa0a4f82f56c727c5507d2cc35577af698c79405ddf12d6ae357d2016bd2311` | stamped 2026-11-08 — **pending**; no block is claimed until `ots upgrade` confirms one |
+| `cell-crypto.js` | `16401a6b73d899f1e733e7e6fdfc9be08636bf2946bc2af8044fe25a379d5047` | stamped 2026-11-08 (second stamp that day) — **pending**; no block is claimed until `ots upgrade` confirms one |
 | `docs/DEFENSIVE-PUBLISHING-GUIDE.md` | `6d97cc4e…7dd95ee0` | the v1.2 proof |
 
-`cell-crypto.js` is v1.4 plus three implementation hardenings, and is **no longer
+`cell-crypto.js` is v1.4 plus four implementation hardenings, and is **no longer
 byte-identical to the v1.4 anchor**. First, 2026-10-31: an opener refuses a PBKDF2 entry whose
 iteration count exceeds 10,000,000 instead of deriving with it. The count is read
 from the file and `header_hash` is unkeyed, so before this an edited entry could
@@ -188,9 +188,27 @@ a value from a file cannot close an attribute. No format change. Quorum cells of
 up to 255 recipients, which is every quorum cell the other four implementations
 can write, are unaffected.
 
+Fourth hardening, later on 2026-11-08: one file, one document, and a bound on
+passphrase work. An opener now refuses a body that is not exactly one gzip
+member with nothing after it, and a padded body whose length is not exactly
+`padme(4 + n)`. Implementations had disagreed on both — some joined gzip members
+and some read only the first, some ignored trailing bytes and some refused — so
+one file could open as different documents in different programs. And since
+`header_hash` is unkeyed, anyone holding a file could add passphrase entries,
+each within the per-entry limits, and an opener would derive a key for every
+one; now passphrase entries are tried cheapest first, and one open does no more
+key-derivation work than one maximum-parameter entry (work counted as PBKDF2
+iterations × 2^24 or Argon2id m × t × 10^7; limit 10^7 × 2^24). Any single
+entry within the limits still opens. No format change; no cell an
+implementation here has written is affected. The Python, Go, Rust and Java ports
+were fixed the same day, and ten conformance vectors (`*-gzip-*`,
+`*-padding-oversized`, `*-padding-unpadded`, `v14-kdf-*`,
+`reject-v14-kdf-work-bound`) pin the behaviour.
+
 Superseded root proofs, not to be cited: `1c1b8371…` (the 2026-10-31 bytes; its
-pending proof is in git history at commit `8619a65`) and `191ed2b0…` (the
-2026-11-05 bytes; at commit `aa67581`).
+pending proof is in git history at commit `8619a65`), `191ed2b0…` (the
+2026-11-05 bytes; at commit `aa67581`) and `efa0a4f8…` (the first 2026-11-08
+bytes; at commit `2f5850e`).
 
 When the v1.4 files were merged here on 2026-10-31, the root proofs for
 `docs/SPEC.md` and `cell-crypto.js` still described v1.3-era bytes; the v1.4

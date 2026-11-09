@@ -623,38 +623,44 @@ public final class Cell {
         }
         int required = (int) Math.max(1, Json.integer(Json.object(header, "threshold"), "required", 1));
 
-        // Step 4: recover the CEK.
+        // Step 4: recover the CEK, in accessOrder and under the passphrase work
+        // bound (§6). tryUnwrap derives once per passphrase supplied, and each
+        // passphrase entry is charged that.
+        List<Attempt> order = accessOrder(accessMap);
+        Budget budget = new Budget(opts.passphrases.size());
         byte[] cek;
         String usedRecipient;
         if (required > 1) {
             List<Gf256.Share> shares = new ArrayList<>(required);
-            for (int index = 0; index < accessMap.size() && shares.size() < required; index++) {
-                Map<String, Object> entry = Json.asObject(accessMap.get(index));
+            for (Attempt it : order) {
+                if (shares.size() >= required) {
+                    break;
+                }
                 // A wrong key here says nothing about the next entry.
-                byte[] material = tryUnwrap(entry, opts);
+                byte[] material = budget.allows(it) ? tryUnwrap(it.entry(), opts) : null;
                 if (material != null) {
-                    int x = (int) Json.integer(entry, "share_index", index + 1);
+                    int x = (int) Json.integer(it.entry(), "share_index", it.index() + 1);
                     shares.add(new Gf256.Share(x, material));
                 }
             }
             if (shares.size() < required) {
-                throw new CellException.QuorumNotMet(required, shares.size());
+                throw new CellException.QuorumNotMet(required, shares.size(), budget.notTried());
             }
             cek = Gf256.combine(shares);
             usedRecipient = shares.size() + "-of-" + accessMap.size() + " quorum";
         } else {
             byte[] material = null;
             String label = "";
-            for (Object entryValue : accessMap) {
-                Map<String, Object> entry = Json.asObject(entryValue);
-                material = tryUnwrap(entry, opts);
+            for (Attempt it : order) {
+                material = budget.allows(it) ? tryUnwrap(it.entry(), opts) : null;
                 if (material != null) {
-                    label = orEmpty(Json.string(entry, "label"));
+                    label = orEmpty(Json.string(it.entry(), "label"));
                     break;
                 }
             }
             if (material == null) {
-                throw new CellException.NoMatchingKey();
+                throw new CellException.NoMatchingKey(
+                        "no matching key — check your key method and try again" + budget.notTried());
             }
             cek = material;
             usedRecipient = label;
@@ -755,6 +761,60 @@ public final class Cell {
      * <p>Returns null rather than throwing: a wrong key for this entry says
      * nothing about the next one.
      */
+    /** One access-map entry in the order an opener tries it. */
+    private record Attempt(int index, Map<String, Object> entry, boolean kdf, long work) {}
+
+    /**
+     * The order an opener tries entries in: those that need no passphrase
+     * first, in map order, then passphrase entries cheapest first (ties in map
+     * order). {@code index} is the map position, which a quorum share falls
+     * back on.
+     */
+    private static List<Attempt> accessOrder(List<Object> accessMap) {
+        List<Attempt> items = new ArrayList<>(accessMap.size());
+        for (int index = 0; index < accessMap.size(); index++) {
+            Map<String, Object> entry = Json.asObject(accessMap.get(index));
+            String method = Json.string(entry, "method");
+            boolean kdf = "pbkdf2".equals(method) || "argon2id".equals(method);
+            items.add(new Attempt(index, entry, kdf, kdf ? CellCrypto.kdfWork(entry) : 0));
+        }
+        items.sort((a, b) -> a.kdf() != b.kdf() ? (a.kdf() ? 1 : -1)
+                : a.kdf() && a.work() != b.work() ? Long.compare(a.work(), b.work())
+                : Integer.compare(a.index(), b.index()));
+        return items;
+    }
+
+    /** The passphrase work one open has spent, against {@link CellCrypto#MAX_KDF_WORK}. */
+    private static final class Budget {
+        private final long perEntry;
+        private long spent;
+        private int skipped;
+
+        Budget(int passphrases) {
+            this.perEntry = passphrases;
+        }
+
+        boolean allows(Attempt it) {
+            if (!it.kdf() || it.work() == 0 || perEntry == 0) {
+                return true;
+            }
+            if (it.work() > (CellCrypto.MAX_KDF_WORK - spent) / perEntry) {
+                skipped++;
+                return false;
+            }
+            spent += it.work() * perEntry;
+            return true;
+        }
+
+        String notTried() {
+            if (skipped == 0) {
+                return "";
+            }
+            return " (" + skipped + " passphrase " + (skipped == 1 ? "entry was" : "entries were")
+                    + " not tried: together they need more key-derivation work than one file may cost)";
+        }
+    }
+
     private static byte[] tryUnwrap(Map<String, Object> entry, OpenOptions opts) {
         Map<String, Object> wrapped = Json.object(entry, "wrapped_cek");
         if (wrapped == null) {
@@ -826,16 +886,12 @@ public final class Cell {
                     return null;
                 }
                 byte[] salt = CellCrypto.decodeB64(saltB64, "salt");
-                long iterationsField = Json.integer(wrapped, "iterations",
-                        CellCrypto.PBKDF2_ITERATIONS);
-                if (iterationsField <= 0) {
-                    iterationsField = CellCrypto.PBKDF2_ITERATIONS;
-                }
-                // Checked before the narrowing cast, so 2^32 + 600000 is refused instead of opening as 600000.
-                if (iterationsField > CellCrypto.PBKDF2_MAX_ITERATIONS) {
+                int iterations;
+                try {
+                    iterations = CellCrypto.pbkdf2Iterations(wrapped);
+                } catch (CellException.Malformed e) {
                     return null;
                 }
-                int iterations = (int) iterationsField;
                 for (String passphrase : opts.passphrases) {
                     try {
                         byte[] wrappingKey =
@@ -853,17 +909,15 @@ public final class Cell {
             case "argon2id" -> {
                 for (String passphrase : opts.passphrases) {
                     try {
-                        long m = Json.integer(wrapped, "m", -1);
-                        long t = Json.integer(wrapped, "t", -1);
-                        long p = Json.integer(wrapped, "p", -1);
-                        CellCrypto.argon2Check(m, t, p);
+                        int[] mtp = CellCrypto.argon2Params(wrapped);
+                        int m = mtp[0], t = mtp[1], p = mtp[2];
                         byte[] salt = CellCrypto.decodeB64(
                                 orEmpty(Json.string(wrapped, "salt")), "salt");
                         if (salt.length < 16) {
                             throw new CellException.Malformed(
                                     "Argon2id salt shorter than 16 bytes — refusing (§6.5)");
                         }
-                        byte[] kek = CellCrypto.argon2Key(passphrase, salt, (int) m, (int) t, (int) p);
+                        byte[] kek = CellCrypto.argon2Key(passphrase, salt, m, t, p);
                         byte[] material = CellCrypto.aesKeyUnwrap(kek,
                                 CellCrypto.decodeB64(ct, "ct"));
                         CellCrypto.wipe(kek);

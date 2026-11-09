@@ -3,7 +3,6 @@
 
 package com.enthropicdata.cell;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
@@ -19,8 +18,11 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
 import java.util.Base64;
-import java.util.zip.GZIPInputStream;
+import java.util.Map;
+import java.util.zip.CRC32;
+import java.util.zip.DataFormatException;
 import java.util.zip.GZIPOutputStream;
+import java.util.zip.Inflater;
 import javax.crypto.Cipher;
 import javax.crypto.KeyAgreement;
 import javax.crypto.Mac;
@@ -144,26 +146,108 @@ public final class CellCrypto {
         }
     }
 
-    /** Decompress a gzip stream, refusing to exceed {@link #MAX_DECOMPRESSED}. */
+    /**
+     * Decompress exactly one gzip member, refusing to exceed
+     * {@link #MAX_DECOMPRESSED}.
+     *
+     * <p>Nothing may follow the member: not a second member, not trailing bytes.
+     * Implementations once disagreed on both (some joined members, some read
+     * only the first; some ignored trailing bytes, some refused), so one file
+     * opened as different documents in different programs. GZIPInputStream joins
+     * members and silently drops trailing bytes that do not look like a header,
+     * so the header and trailer are read here and the deflate data in between
+     * goes to an {@link Inflater}, which reports exactly what it left unread.
+     */
     public static byte[] gzipDecompress(byte[] data) {
-        try (GZIPInputStream gzip = new GZIPInputStream(new ByteArrayInputStream(data));
-                ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+        int start = gzipHeaderEnd(data);
+        int end = data.length - 8; // CRC-32 and size, little-endian
+        if (end <= start) {
+            throw new CellException.Malformed("truncated gzip stream");
+        }
+        Inflater inflater = new Inflater(true);
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            inflater.setInput(data, start, data.length - start);
             byte[] chunk = new byte[65536];
             long total = 0;
-            int read;
-            while ((read = gzip.read(chunk)) > 0) {
-                total += read;
+            while (!inflater.finished()) {
+                int n = inflater.inflate(chunk);
+                if (n == 0 && !inflater.finished()) {
+                    throw new CellException.Malformed("truncated gzip stream");
+                }
+                total += n;
                 if (total > MAX_DECOMPRESSED) {
                     throw new CellException.Malformed("decompressed size exceeds safety limit");
                 }
-                out.write(chunk, 0, read);
+                out.write(chunk, 0, n);
             }
-            return out.toByteArray();
-        } catch (CellException e) {
-            throw e;
-        } catch (Exception e) {
+            int left = inflater.getRemaining();
+            if (left > 8) {
+                throw new CellException.Malformed("data after the end of the gzip member — refusing");
+            }
+            if (left < 8) {
+                throw new CellException.Malformed("truncated gzip stream");
+            }
+            byte[] plain = out.toByteArray();
+            CRC32 crc = new CRC32();
+            crc.update(plain);
+            if (crc.getValue() != le32(data, end) || (plain.length & 0xffffffffL) != le32(data, end + 4)) {
+                throw new CellException.Malformed("gzip checksum or size mismatch");
+            }
+            return plain;
+        } catch (DataFormatException e) {
             throw new CellException.Malformed("payload is not a valid gzip stream", e);
+        } catch (java.io.IOException e) {
+            throw new CellException.Malformed("payload is not a valid gzip stream", e);
+        } finally {
+            inflater.end();
         }
+    }
+
+    private static long le32(byte[] b, int at) {
+        return (b[at] & 0xffL) | (b[at + 1] & 0xffL) << 8 | (b[at + 2] & 0xffL) << 16
+                | (b[at + 3] & 0xffL) << 24;
+    }
+
+    /** Where the deflate data starts after a gzip member header (RFC 1952 §2.3). */
+    private static int gzipHeaderEnd(byte[] b) {
+        if (b.length < 10 || (b[0] & 0xff) != 0x1f || (b[1] & 0xff) != 0x8b || b[2] != 8) {
+            throw new CellException.Malformed("payload is not a valid gzip stream — bad header");
+        }
+        int flg = b[3] & 0xff;
+        if ((flg & 0xe0) != 0) {
+            throw new CellException.Malformed("gzip header has reserved flags set");
+        }
+        int i = 10;
+        if ((flg & 0x04) != 0) { // FEXTRA
+            if (i + 2 > b.length) {
+                throw new CellException.Malformed("truncated gzip header");
+            }
+            i += 2 + ((b[i] & 0xff) | (b[i + 1] & 0xff) << 8);
+        }
+        for (int f : new int[] {0x08, 0x10}) { // FNAME, FCOMMENT: zero-terminated
+            if ((flg & f) == 0) {
+                continue;
+            }
+            while (i < b.length && b[i] != 0) {
+                i++;
+            }
+            i++;
+        }
+        if ((flg & 0x02) != 0) { // FHCRC: low 16 bits of the header's CRC-32
+            if (i + 2 > b.length) {
+                throw new CellException.Malformed("truncated gzip header");
+            }
+            CRC32 crc = new CRC32();
+            crc.update(b, 0, i);
+            if ((crc.getValue() & 0xffff) != ((b[i] & 0xff) | (b[i + 1] & 0xff) << 8)) {
+                throw new CellException.Malformed("gzip header checksum mismatch");
+            }
+            i += 2;
+        }
+        if (i > b.length) {
+            throw new CellException.Malformed("truncated gzip header");
+        }
+        return i;
     }
 
     // ─── Content encryption — AES-256-GCM, spec §4.3 ────────────────────────
@@ -425,6 +509,77 @@ public final class CellCrypto {
      * does: below the floor the passphrase is barely protected; above the
      * ceiling a hostile cell can exhaust the opener's memory or time.
      */
+    /** Read and check an entry's m, t and p (§6.5); returns {m, t, p}. */
+    public static int[] argon2Params(Map<String, Object> wrapped) {
+        long[] v = new long[3];
+        String[] keys = {"m", "t", "p"};
+        for (int i = 0; i < 3; i++) {
+            Long n = Json.integral(wrapped == null ? null : wrapped.get(keys[i]));
+            if (n == null) {
+                throw new CellException.Malformed("Argon2id parameters out of range — refusing (§6.5)");
+            }
+            v[i] = n;
+        }
+        argon2Check(v[0], v[1], v[2]);
+        return new int[] {(int) v[0], (int) v[1], (int) v[2]};
+    }
+
+    /**
+     * An entry's iteration count: absent, null or 0 means the default; anything
+     * else must be a whole number in 1…10,000,000.
+     */
+    public static int pbkdf2Iterations(Map<String, Object> wrapped) {
+        Object raw = wrapped == null ? null : wrapped.get("iterations");
+        if (raw == null) {
+            return PBKDF2_ITERATIONS;
+        }
+        Long n = Json.integral(raw);
+        if (n != null && n == 0) {
+            return PBKDF2_ITERATIONS;
+        }
+        if (n == null || n < 1 || n > PBKDF2_MAX_ITERATIONS) {
+            throw new CellException.Malformed("PBKDF2 iteration count out of range — refusing");
+        }
+        return (int) (long) n;
+    }
+
+    // ─── Passphrase work bound — spec §6, §6.2, §6.5 ───────────────────────
+    //
+    // The limits above bound one entry. header_hash is unkeyed, so anyone who
+    // can rewrite a file can add entries, each within those limits, and an
+    // opener would derive a key for every one. So one open is bounded too:
+    // passphrase entries are tried cheapest first, and the opener stops before
+    // its key-derivation work would pass that of one maximum-parameter entry.
+    // Any single entry within the limits still opens. Work is counted in
+    // integers, as in the reference: PBKDF2 = iterations × 2^24,
+    // Argon2id = m × t × 10^7, limit = 10^7 × 2^24.
+
+    private static final long ARGON2_MAX_WORK = (long) ARGON2_M_MAX * 16; // 2^24
+
+    /** The passphrase work one open may spend (see {@link #kdfWork}). */
+    public static final long MAX_KDF_WORK = PBKDF2_MAX_ITERATIONS * ARGON2_MAX_WORK;
+
+    /**
+     * Work for one derivation against {@code entry}; 0 when its parameters are
+     * refused (the unwrap then fails without deriving anything).
+     */
+    public static long kdfWork(Map<String, Object> entry) {
+        Map<String, Object> wrapped = Json.object(entry, "wrapped_cek");
+        String method = Json.string(entry, "method");
+        try {
+            if ("pbkdf2".equals(method)) {
+                return pbkdf2Iterations(wrapped) * ARGON2_MAX_WORK;
+            }
+            if ("argon2id".equals(method)) {
+                int[] mtp = argon2Params(wrapped);
+                return (long) mtp[0] * mtp[1] * PBKDF2_MAX_ITERATIONS;
+            }
+        } catch (CellException.Malformed e) {
+            // out of range: no derivation runs
+        }
+        return 0;
+    }
+
     public static void argon2Check(long m, long t, long p) {
         if (m < ARGON2_M_MIN || m > ARGON2_M_MAX || t < 1 || t > 16 || p < 1 || p > 16) {
             throw new CellException.Malformed("Argon2id parameters out of range — refusing (§6.5)");
@@ -493,6 +648,11 @@ public final class CellCrypto {
                 | (body[3] & 0xffL) << 24;
         if (4 + n > body.length) {
             throw new CellException.Malformed("malformed padded body — length exceeds body");
+        }
+        // Exactly the Padmé length: any other would let a writer pad to a size of
+        // its choosing, and give a crafted body room that a conforming one lacks.
+        if (body.length != padmeLength(4 + n)) {
+            throw new CellException.Malformed("malformed padded body — not the Padmé length");
         }
         for (int i = (int) (4 + n); i < body.length; i++) {
             if (body[i] != 0) {

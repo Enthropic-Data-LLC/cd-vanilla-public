@@ -52,7 +52,7 @@ timestamp proofs in [`docs/defensive-pub/anchors/v1.4/`](docs/defensive-pub/anch
 ## Running everything
 
 ```bash
-npm test                                                  # JS reference + 41 vectors
+npm test                                                  # JS reference + 52 vectors
 (cd impl/python && python3 -m unittest discover -s tests -t .)
 (cd impl/go && go test ./...)
 (cd impl/rust && cargo test --release)

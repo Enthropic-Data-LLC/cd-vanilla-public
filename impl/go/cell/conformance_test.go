@@ -138,6 +138,8 @@ var rejectErrors = map[string]error{
 	"signature-misplaced":   cell.ErrMalformed,
 	"padding-invalid":       cell.ErrMalformed,
 	"access-map-too-large":  cell.ErrMalformed,
+	"gzip-invalid":          cell.ErrMalformed,
+	"kdf-work-exceeded":     cell.ErrNoMatchingKey,
 }
 
 func TestConformanceOpenVectors(t *testing.T) {

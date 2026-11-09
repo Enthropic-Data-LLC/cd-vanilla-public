@@ -637,3 +637,84 @@ class TestV14(CellTestCase):
         self.assertEqual(cell["version"], "1.3")
         self.assertEqual(cell["header"]["access_map"][0]["fingerprint"], self.alice.fingerprint)
         self.assertTrue(cell_open(cell, keys=[self.alice]).signed)
+
+    def test_gzip_one_member_nothing_after(self):
+        a, b, e = crypto.gzip_compress(b"first"), crypto.gzip_compress(b"SECOND"), crypto.gzip_compress(b"")
+        self.assertEqual(crypto.gzip_decompress(a), b"first")
+        bad_crc = bytearray(a)
+        bad_crc[-5] ^= 1
+        for name, body in [("two members", a + b), ("empty first member", e + b), ("trailing bytes", a + b"JUNK"),
+                           ("one trailing zero", a + b"\0"), ("bad crc", bytes(bad_crc)), ("short", a[:-1])]:
+            with self.subTest(name), self.assertRaises(MalformedCellError):
+                crypto.gzip_decompress(body)
+
+    def test_padding_is_exactly_padme(self):
+        body = crypto.pad_body(b"\x01\x02\x03")
+        for name, bad in [("longer", body + bytes(512)), ("unpadded", body[:7]), ("one short", body[:-1])]:
+            with self.subTest(name), self.assertRaisesRegex(MalformedCellError, "Padmé length"):
+                crypto.unpad_body(bad)
+
+    def test_parameters_read_as_javascript_reads_them(self):
+        self.assertEqual(crypto.pbkdf2_iterations({}), 600_000)
+        self.assertEqual(crypto.pbkdf2_iterations({"iterations": 0}), 600_000)
+        self.assertEqual(crypto.pbkdf2_iterations({"iterations": 700000.0}), 700_000)
+        for bad in (-5, True, "600000", 1.5, 10_000_001):
+            with self.subTest(bad), self.assertRaises(MalformedCellError):
+                crypto.pbkdf2_iterations({"iterations": bad})
+        self.assertEqual(crypto.argon2_params({"m": 65536.0, "t": 3, "p": 4}), (65536, 3, 4))
+        with self.assertRaises(MalformedCellError):
+            crypto.argon2_params({"m": 65536.5, "t": 3, "p": 4})
+
+    def test_passphrase_work_bound(self):
+        cell = self.seal(b"kdf", recipients=[Recipient.passphrase_("pw")])
+        real = cell["header"]["access_map"][0]
+        max_argon = {"method": "argon2id", "wrapped_cek": {"m": 1048576, "t": 16, "p": 16,
+                                                           "salt": real["wrapped_cek"]["salt"],
+                                                           "ct": real["wrapped_cek"]["ct"]}}
+
+        def pbkdf2_at(n):
+            return {"method": "pbkdf2", "wrapped_cek": {**real["wrapped_cek"], "iterations": n}}
+
+        self.assertEqual(crypto.kdf_work(real), 600_000 * 2**24)
+        self.assertEqual(crypto.kdf_work(max_argon), crypto.MAX_KDF_WORK)
+        self.assertEqual(crypto.kdf_work(pbkdf2_at(10_000_000)), crypto.MAX_KDF_WORK)
+        self.assertEqual(crypto.kdf_work(pbkdf2_at(-5)), 0)
+
+        seen = []
+
+        def spy(passphrase):
+            def unwrap(entry):
+                seen.append("real" if entry is real else f"{entry['method']}:"
+                            f"{entry['wrapped_cek'].get('iterations', entry['wrapped_cek'].get('m'))}")
+                return crypto.pbkdf2_unwrap_cek(entry["wrapped_cek"], passphrase) if entry is real and passphrase else None
+            return unwrap
+
+        def with_map(entries):
+            cell["header"]["access_map"] = entries
+            return rehash(cell)
+
+        # 255 maximum-cost Argon2id entries prepended: the real entry is tried first, nothing else.
+        with_map([max_argon] * 255 + [real])
+        self.assertEqual(cell_open(cell, unwrap=spy("pw")).data, b"kdf")
+        self.assertEqual(seen, ["real"])
+        seen.clear()
+        with self.assertRaisesRegex(NoMatchingKeyError, "255 passphrase entries were not tried"):
+            cell_open(cell, unwrap=spy(None))
+        self.assertEqual(seen, ["real"])
+
+        for entries, expect_seen, expect_msg in [
+            ([max_argon], ["argon2id:1048576"], "no matching key"),
+            ([pbkdf2_at(5_000_000), pbkdf2_at(5_000_000)], ["pbkdf2:5000000"] * 2, "no matching key"),
+            ([pbkdf2_at(5_000_001), pbkdf2_at(5_000_000)], ["pbkdf2:5000000"], "1 passphrase entry was not tried"),
+        ]:
+            with self.subTest(expect_seen):
+                with_map(entries)
+                seen.clear()
+                with self.assertRaisesRegex(NoMatchingKeyError, expect_msg):
+                    cell_open(cell, unwrap=spy(None))
+                self.assertEqual(seen, expect_seen)
+
+        # The default unwrapper derives once per passphrase supplied, and is charged that.
+        with_map([pbkdf2_at(5_000_000)])
+        with self.assertRaisesRegex(NoMatchingKeyError, "1 passphrase entry was not tried"):
+            cell_open(cell, passphrases=["a", "b", "c"])

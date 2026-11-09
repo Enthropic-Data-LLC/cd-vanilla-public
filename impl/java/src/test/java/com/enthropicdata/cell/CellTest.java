@@ -514,4 +514,91 @@ class CellTest {
         rehash(cell);
         assertThrows(CellException.Malformed.class, () -> Cell.open(cell, keys(ALICE)));
     }
+
+    @Test
+    void gzipOneMemberNothingAfter() {
+        byte[] a = CellCrypto.gzipCompress("first".getBytes());
+        byte[] b = CellCrypto.gzipCompress("SECOND".getBytes());
+        byte[] e = CellCrypto.gzipCompress(new byte[0]);
+        assertArrayEquals("first".getBytes(), CellCrypto.gzipDecompress(a));
+        byte[] badCrc = a.clone();
+        badCrc[badCrc.length - 5] ^= 1;
+        Map<String, byte[]> bad = Map.of(
+                "two members", cat(a, b), "empty first member", cat(e, b),
+                "trailing bytes", cat(a, "JUNK".getBytes()), "one trailing zero", cat(a, new byte[1]),
+                "bad crc", badCrc, "short", java.util.Arrays.copyOf(a, a.length - 1));
+        bad.forEach((name, body) -> assertThrows(CellException.Malformed.class,
+                () -> CellCrypto.gzipDecompress(body), name));
+    }
+
+    private static byte[] cat(byte[] x, byte[] y) {
+        byte[] out = java.util.Arrays.copyOf(x, x.length + y.length);
+        System.arraycopy(y, 0, out, x.length, y.length);
+        return out;
+    }
+
+    @Test
+    void paddingIsExactlyPadme() {
+        byte[] body = CellCrypto.padBody(new byte[] {1, 2, 3});
+        Map<String, byte[]> bad = Map.of("longer", java.util.Arrays.copyOf(body, body.length + 512),
+                "unpadded", java.util.Arrays.copyOf(body, 7), "one short", java.util.Arrays.copyOf(body, body.length - 1));
+        bad.forEach((name, b) -> {
+            CellException.Malformed err = assertThrows(CellException.Malformed.class, () -> CellCrypto.unpadBody(b), name);
+            assertTrue(err.getMessage().contains("Padmé length"), name + ": " + err.getMessage());
+        });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> obj(String json) {
+        return (Map<String, Object>) Json.parse(json);
+    }
+
+    @Test
+    void parametersReadAsJavaScriptReadsThem() {
+        assertEquals(600_000, CellCrypto.pbkdf2Iterations(obj("{}")));
+        assertEquals(600_000, CellCrypto.pbkdf2Iterations(obj("{\"iterations\":0}")));
+        assertEquals(600_000, CellCrypto.pbkdf2Iterations(obj("{\"iterations\":null}")));
+        assertEquals(700_000, CellCrypto.pbkdf2Iterations(obj("{\"iterations\":700000.0}")));
+        for (String bad : List.of("-5", "true", "\"600000\"", "1.5", "10000001", "4295567296")) {
+            assertThrows(CellException.Malformed.class,
+                    () -> CellCrypto.pbkdf2Iterations(obj("{\"iterations\":" + bad + "}")), bad);
+        }
+        assertArrayEquals(new int[] {65536, 3, 4}, CellCrypto.argon2Params(obj("{\"m\":65536.0,\"t\":3,\"p\":4}")));
+        assertThrows(CellException.Malformed.class,
+                () -> CellCrypto.argon2Params(obj("{\"m\":65536.5,\"t\":3,\"p\":4}")));
+    }
+
+    @Test
+    void passphraseWorkBound() {
+        assertEquals(CellCrypto.MAX_KDF_WORK, CellCrypto.kdfWork(
+                obj("{\"method\":\"argon2id\",\"wrapped_cek\":{\"m\":1048576,\"t\":16,\"p\":16}}")));
+        assertEquals(CellCrypto.MAX_KDF_WORK, CellCrypto.kdfWork(
+                obj("{\"method\":\"pbkdf2\",\"wrapped_cek\":{\"iterations\":10000000}}")));
+        assertEquals(0, CellCrypto.kdfWork(obj("{\"method\":\"pbkdf2\",\"wrapped_cek\":{\"iterations\":-5}}")));
+
+        Map<String, Object> cell = seal("kdf".getBytes(), List.of(Cell.Recipient.passphrase("pw", "")), null);
+        Map<String, Object> header = Json.object(cell, "header");
+        Map<String, Object> real = Json.asObject(Json.array(header, "access_map").get(0));
+        // A copy of the real entry claiming 10,000,000 iterations: deriving it costs
+        // the whole budget and unwraps nothing. Tried first, the real entry never would be.
+        Map<String, Object> decoy = new java.util.LinkedHashMap<>(real);
+        Map<String, Object> wc = new java.util.LinkedHashMap<>(Json.object(real, "wrapped_cek"));
+        wc.put("iterations", 10_000_000.0);
+        decoy.put("wrapped_cek", wc);
+        header.put("access_map", new java.util.ArrayList<>(List.of(decoy, real)));
+        rehash(cell);
+        Cell.OpenOptions one = new Cell.OpenOptions();
+        one.passphrases = List.of("pw");
+        assertArrayEquals("kdf".getBytes(), Cell.open(cell, one).data());
+
+        // Each passphrase supplied is a derivation: 17 × 600,000 iterations passes the limit.
+        header.put("access_map", new java.util.ArrayList<>(List.of(real)));
+        rehash(cell);
+        Cell.OpenOptions many = new Cell.OpenOptions();
+        many.passphrases = java.util.Collections.nCopies(17, "pw");
+        CellException.NoMatchingKey err = assertThrows(CellException.NoMatchingKey.class, () -> Cell.open(cell, many));
+        assertTrue(err.getMessage().contains("1 passphrase entry was not tried"), err.getMessage());
+        many.passphrases = java.util.Collections.nCopies(16, "pw");
+        assertArrayEquals("kdf".getBytes(), Cell.open(cell, many).data());
+    }
 }

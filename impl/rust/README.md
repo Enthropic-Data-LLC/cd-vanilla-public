@@ -143,7 +143,7 @@ cargo build --release
 | WebAuthn PRF access method | ⚠️ unwrap only — the PRF output must come from a CTAP2 layer; browser-only in practice |
 | Shamir M-of-N quorum over GF(256) | ✅ |
 | Canonical serialization, AAD binding (version in the AAD from v1.4), ECDSA sender signature (`header_sig` to v1.3; inside the manifest in v1.4) | ✅ |
-| v1.4: blind entries + trial decryption, Padmé padding, Argon2id (`argon2` crate) | ✅ — all 41 conformance vectors |
+| v1.4: blind entries + trial decryption, Padmé padding, Argon2id (`argon2` crate) | ✅ — all 52 conformance vectors |
 | `.cell` / `.celz` / `.cdpub` / `.cdkey` | ✅ |
 | Mitosis lineage (`prev_hash`) | ✅ via `CreateOptions::prev_hash` |
 

@@ -37,6 +37,10 @@ pub enum Error {
     NoMatchingKey,
     /// Fewer than `threshold.required` shares were recovered.
     QuorumNotMet { needed: usize, unlocked: usize },
+    /// No key was recovered, and some passphrase entries were never tried:
+    /// together they need more key-derivation work than one open may spend
+    /// (spec §6; see `crypto::MAX_KDF_WORK`).
+    KdfWorkExceeded { not_tried: usize },
     /// The AES-GCM tag failed: the ciphertext or the AAD-bound metadata does
     /// not match what was sealed (spec §4.4).
     Decryption,
@@ -62,6 +66,12 @@ impl fmt::Display for Error {
             Error::QuorumNotMet { needed, unlocked } => {
                 write!(f, "quorum not met — need {needed}, unlocked {unlocked}")
             }
+            Error::KdfWorkExceeded { not_tried } => write!(
+                f,
+                "no key recovered — {not_tried} passphrase {} not tried: together they need \
+                 more key-derivation work than one file may cost",
+                if *not_tried == 1 { "entry was" } else { "entries were" }
+            ),
             Error::Decryption => write!(
                 f,
                 "authentication failed — the ciphertext or the AAD-bound metadata \

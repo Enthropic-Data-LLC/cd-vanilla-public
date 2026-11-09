@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"math/bits"
 
@@ -116,13 +117,21 @@ func GzipCompress(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// GzipDecompress decompresses a gzip stream, refusing to exceed MaxDecompressed.
+// GzipDecompress decompresses exactly one gzip member, refusing to exceed
+// MaxDecompressed. Nothing may follow the member: not a second member, not
+// trailing bytes. Implementations once disagreed on both (some joined members,
+// some read only the first; some ignored trailing bytes, some refused), so one
+// file opened as different documents in different programs.
 func GzipDecompress(data []byte) ([]byte, error) {
-	reader, err := gzip.NewReader(bytes.NewReader(data))
+	// A *bytes.Reader is an io.ByteReader, so gzip reads from it directly and
+	// never past the trailer: whatever is left in src afterwards follows the member.
+	src := bytes.NewReader(data)
+	reader, err := gzip.NewReader(src)
 	if err != nil {
 		return nil, fmt.Errorf("%w: payload is not a valid gzip stream: %v", ErrMalformed, err)
 	}
 	defer reader.Close()
+	reader.Multistream(false)
 	// One byte over the cap, so a stream that is exactly at the limit still
 	// reads and anything larger is detected rather than silently truncated.
 	out, err := io.ReadAll(io.LimitReader(reader, MaxDecompressed+1))
@@ -131,6 +140,9 @@ func GzipDecompress(data []byte) ([]byte, error) {
 	}
 	if len(out) > MaxDecompressed {
 		return nil, fmt.Errorf("%w: decompressed size exceeds safety limit", ErrMalformed)
+	}
+	if src.Len() != 0 {
+		return nil, fmt.Errorf("%w: data after the end of the gzip member — refusing", ErrMalformed)
 	}
 	return out, nil
 }
@@ -303,21 +315,44 @@ func PBKDF2WrapCEK(keyMaterial []byte, passphrase string, salt []byte) (*Object,
 	return out, nil
 }
 
+// jsonInt reads a JSON number with an integral value, as JavaScript's
+// Number.isInteger does: 65536.0 is 65536; 1.5, true and "5" are not integers.
+// Every implementation reads entry parameters this way, so they agree on which
+// entries are tried and on what each one costs.
+func jsonInt(v Value) (int64, bool) {
+	f, ok := v.(float64)
+	if !ok || math.IsNaN(f) || math.IsInf(f, 0) || f != math.Trunc(f) || math.Abs(f) > 1<<53 {
+		return 0, false
+	}
+	return int64(f), true
+}
+
+// PBKDF2IterationCount reads an entry's iteration count: absent, null or 0
+// means the default; anything else must be a whole number in 1…10,000,000.
+func PBKDF2IterationCount(wrapped *Object) (int, error) {
+	v, ok := wrapped.Get("iterations")
+	if !ok || v == nil {
+		return PBKDF2Iterations, nil
+	}
+	n, isInt := jsonInt(v)
+	if isInt && n == 0 {
+		return PBKDF2Iterations, nil
+	}
+	if !isInt || n < 1 || n > PBKDF2MaxIterations {
+		return 0, fmt.Errorf("%w: PBKDF2 iteration count out of range — refusing", ErrMalformed)
+	}
+	return int(n), nil
+}
+
 // PBKDF2UnwrapCEK unwraps a passphrase entry.
 func PBKDF2UnwrapCEK(wrapped *Object, passphrase string) ([]byte, error) {
 	salt, err := DecodeB64(wrapped.GetString("salt"), "salt")
 	if err != nil {
 		return nil, err
 	}
-	// Checked on the float, before int(): an out-of-range conversion is platform-defined and can come out negative.
-	if v, ok := wrapped.Get("iterations"); ok {
-		if f, isNum := v.(float64); isNum && f > PBKDF2MaxIterations {
-			return nil, fmt.Errorf("%w: PBKDF2 iteration count out of range — refusing", ErrMalformed)
-		}
-	}
-	iterations := wrapped.GetInt("iterations", PBKDF2Iterations)
-	if iterations <= 0 {
-		iterations = PBKDF2Iterations
+	iterations, err := PBKDF2IterationCount(wrapped)
+	if err != nil {
+		return nil, err
 	}
 	wrappingKey, err := derivePassphraseKey(passphrase, salt, iterations)
 	if err != nil {
@@ -523,23 +558,27 @@ func Argon2idWrapCEK(keyMaterial []byte, passphrase string, params *[3]int, salt
 	return out, nil
 }
 
+// Argon2Params reads and checks an entry's m, t and p (§6.5).
+func Argon2Params(wrapped *Object) (m, t, p int, err error) {
+	var vals [3]int
+	for i, k := range []string{"m", "t", "p"} {
+		v, _ := wrapped.Get(k)
+		n, ok := jsonInt(v)
+		if !ok || n < 0 || n > math.MaxInt32 {
+			return 0, 0, 0, fmt.Errorf("%w: Argon2id parameters out of range — refusing (§6.5)", ErrMalformed)
+		}
+		vals[i] = int(n)
+	}
+	if err := Argon2Check(vals[0], vals[1], vals[2]); err != nil {
+		return 0, 0, 0, err
+	}
+	return vals[0], vals[1], vals[2], nil
+}
+
 // Argon2idUnwrapCEK unwraps an Argon2id entry's wrapped_cek object.
 func Argon2idUnwrapCEK(wrapped *Object, passphrase string) ([]byte, error) {
-	num := func(k string) (int, bool) {
-		v, ok := wrapped.Get(k)
-		f, isNum := v.(float64)
-		if !ok || !isNum || f != float64(int(f)) {
-			return 0, false
-		}
-		return int(f), true
-	}
-	m, okM := num("m")
-	t, okT := num("t")
-	p, okP := num("p")
-	if !okM || !okT || !okP {
-		return nil, fmt.Errorf("%w: Argon2id parameters out of range — refusing (§6.5)", ErrMalformed)
-	}
-	if err := Argon2Check(m, t, p); err != nil {
+	m, t, p, err := Argon2Params(wrapped)
+	if err != nil {
 		return nil, err
 	}
 	salt, err := DecodeB64(wrapped.GetString("salt"), "salt")
@@ -571,6 +610,38 @@ func PadmeLength(n int) int {
 	return (n + step - 1) / step * step
 }
 
+// ─── Passphrase work bound — spec §6, §6.2, §6.5 ─────────────────────────────
+//
+// The limits above bound one entry. header_hash is unkeyed, so anyone who can
+// rewrite a file can add entries, each within those limits, and an opener would
+// derive a key for every one. So one open is bounded too: passphrase entries are
+// tried cheapest first, and the opener stops before its key-derivation work
+// would pass that of one maximum-parameter entry. Any single entry within the
+// limits still opens. Work is counted in integers, as in the reference:
+// PBKDF2 = iterations × 2^24, Argon2id = m × t × 10^7, limit = 10^7 × 2^24.
+
+const argon2MaxWork = argon2MMax * 16 // 2^24
+
+// MaxKDFWork is the passphrase work one open may spend (see KDFWork).
+const MaxKDFWork int64 = PBKDF2MaxIterations * argon2MaxWork
+
+// KDFWork is the work for one derivation against entry; 0 when its parameters
+// are refused (the unwrap then fails without deriving anything).
+func KDFWork(entry *Object) int64 {
+	wrapped := entry.GetObject("wrapped_cek")
+	switch entry.GetString("method") {
+	case "pbkdf2":
+		if n, err := PBKDF2IterationCount(wrapped); err == nil {
+			return int64(n) * argon2MaxWork
+		}
+	case "argon2id":
+		if m, t, _, err := Argon2Params(wrapped); err == nil {
+			return int64(m) * int64(t) * PBKDF2MaxIterations
+		}
+	}
+	return 0
+}
+
 // PadBody is LE32(len(gz)) || gz || zeros up to PadmeLength(4 + len(gz)).
 func PadBody(gz []byte) ([]byte, error) {
 	if uint64(len(gz)) >= 1<<32 {
@@ -591,6 +662,11 @@ func UnpadBody(body []byte) ([]byte, error) {
 	n := int(uint32(body[0]) | uint32(body[1])<<8 | uint32(body[2])<<16 | uint32(body[3])<<24)
 	if n < 0 || 4+n > len(body) {
 		return nil, fmt.Errorf("%w: malformed padded body — length exceeds body", ErrMalformed)
+	}
+	// Exactly the Padmé length: any other would let a writer pad to a size of its
+	// choosing, and give a crafted body room that a conforming one lacks.
+	if len(body) != PadmeLength(4+n) {
+		return nil, fmt.Errorf("%w: malformed padded body — not the Padmé length", ErrMalformed)
 	}
 	for _, b := range body[4+n:] {
 		if b != 0 {

@@ -701,47 +701,68 @@ func openCell(c *Object, opts OpenOptions) (*OpenResult, error) {
 		required = 1
 	}
 
-	// Step 4: recover the CEK.
+	// Step 4: recover the CEK, in accessOrder and under the passphrase work
+	// bound (§6). tryUnwrap derives once per passphrase supplied, and each
+	// passphrase entry is charged that.
+	perEntry := int64(len(opts.Passphrases))
+	var spent int64
+	skipped := 0
+	attempt := func(it attemptItem) []byte {
+		if it.entry == nil {
+			return nil
+		}
+		if it.kdf && it.work > 0 && perEntry > 0 {
+			if it.work > (MaxKDFWork-spent)/perEntry {
+				skipped++
+				return nil
+			}
+			spent += it.work * perEntry
+		}
+		return tryUnwrap(it.entry, opts) // nil: a wrong key here says nothing about the next entry
+	}
+	notTried := func() string {
+		switch skipped {
+		case 0:
+			return ""
+		case 1:
+			return " (1 passphrase entry was not tried: together they need more key-derivation work than one file may cost)"
+		}
+		return fmt.Sprintf(" (%d passphrase entries were not tried: together they need more key-derivation work than one file may cost)", skipped)
+	}
+	order := accessOrder(accessMap)
+
 	var cek []byte
 	usedRecipient := ""
 	if required > 1 {
 		shares := make([]Share, 0, required)
-		for index, entryValue := range accessMap {
-			entry, ok := entryValue.(*Object)
-			if !ok {
+		for _, it := range order {
+			material := attempt(it)
+			if material == nil {
 				continue
 			}
-			material := tryUnwrap(entry, opts)
-			if material == nil {
-				continue // a wrong key here says nothing about the next entry
-			}
-			x := entry.GetInt("share_index", index+1)
+			x := it.entry.GetInt("share_index", it.index+1)
 			shares = append(shares, Share{X: x, Data: material})
 			if len(shares) >= required {
 				break
 			}
 		}
 		if len(shares) < required {
-			return nil, fmt.Errorf("%w: need %d, unlocked %d", ErrQuorumNotMet, required, len(shares))
+			return nil, fmt.Errorf("%w: need %d, unlocked %d%s", ErrQuorumNotMet, required, len(shares), notTried())
 		}
 		if cek, err = CombineShares(shares); err != nil {
 			return nil, err
 		}
 		usedRecipient = fmt.Sprintf("%d-of-%d quorum", len(shares), len(accessMap))
 	} else {
-		for _, entryValue := range accessMap {
-			entry, ok := entryValue.(*Object)
-			if !ok {
-				continue
-			}
-			if material := tryUnwrap(entry, opts); material != nil {
+		for _, it := range order {
+			if material := attempt(it); material != nil {
 				cek = material
-				usedRecipient = entry.GetString("label")
+				usedRecipient = it.entry.GetString("label")
 				break
 			}
 		}
 		if cek == nil {
-			return nil, fmt.Errorf("%w: check your key method and try again", ErrNoMatchingKey)
+			return nil, fmt.Errorf("%w: check your key method and try again%s", ErrNoMatchingKey, notTried())
 		}
 	}
 	defer wipe(cek)
@@ -869,6 +890,40 @@ func openCell(c *Object, opts OpenOptions) (*OpenResult, error) {
 		}
 	}
 	return result, nil
+}
+
+// attemptItem is one access-map entry in the order an opener tries it.
+type attemptItem struct {
+	index int     // position in the map; a quorum share falls back on it
+	entry *Object // nil when the entry is not an object
+	kdf   bool    // a passphrase method
+	work  int64   // KDFWork, for a passphrase entry
+}
+
+// accessOrder is the order an opener tries entries in: those that need no
+// passphrase first, in map order, then passphrase entries cheapest first (ties
+// in map order).
+func accessOrder(accessMap []Value) []attemptItem {
+	items := make([]attemptItem, 0, len(accessMap))
+	for index, v := range accessMap {
+		entry, _ := v.(*Object)
+		it := attemptItem{index: index, entry: entry}
+		if method := entry.GetString("method"); method == "pbkdf2" || method == "argon2id" {
+			it.kdf, it.work = true, KDFWork(entry)
+		}
+		items = append(items, it)
+	}
+	sort.SliceStable(items, func(a, b int) bool {
+		x, y := items[a], items[b]
+		if x.kdf != y.kdf {
+			return !x.kdf
+		}
+		if x.kdf && x.work != y.work {
+			return x.work < y.work
+		}
+		return x.index < y.index
+	})
+	return items
 }
 
 // tryUnwrap attempts one access-map entry with whatever material was supplied,

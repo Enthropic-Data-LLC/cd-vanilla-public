@@ -622,3 +622,120 @@ func TestV14AccessMapLimit(t *testing.T) {
 		t.Fatalf("257 entries: %v", err)
 	}
 }
+
+func TestGzipOneMemberNothingAfter(t *testing.T) {
+	gz := func(s string) []byte {
+		b, err := cell.GzipCompress([]byte(s))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	a, b, e := gz("first"), gz("SECOND"), gz("")
+	if out, err := cell.GzipDecompress(a); err != nil || string(out) != "first" {
+		t.Fatalf("one member: %q %v", out, err)
+	}
+	badCRC := append([]byte(nil), a...)
+	badCRC[len(badCRC)-5] ^= 1
+	cat := func(parts ...[]byte) []byte { return bytes.Join(parts, nil) }
+	for name, body := range map[string][]byte{
+		"two members": cat(a, b), "empty first member": cat(e, b), "trailing bytes": cat(a, []byte("JUNK")),
+		"one trailing zero": cat(a, []byte{0}), "bad crc": badCRC, "short": a[:len(a)-1],
+	} {
+		if _, err := cell.GzipDecompress(body); !errors.Is(err, cell.ErrMalformed) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestPaddingIsExactlyPadme(t *testing.T) {
+	body, err := cell.PadBody([]byte{1, 2, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, bad := range map[string][]byte{
+		"longer": append(append([]byte(nil), body...), make([]byte, 512)...), "unpadded": body[:7], "one short": body[:len(body)-1],
+	} {
+		if _, err := cell.UnpadBody(bad); err == nil || !strings.Contains(err.Error(), "Padmé length") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func parseObject(t *testing.T, s string) *cell.Object {
+	t.Helper()
+	v, err := cell.ParseValue([]byte(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v.(*cell.Object)
+}
+
+func TestParametersReadAsJavaScriptReadsThem(t *testing.T) {
+	for s, want := range map[string]int{`{}`: 600000, `{"iterations":0}`: 600000, `{"iterations":null}`: 600000, `{"iterations":700000.0}`: 700000} {
+		if n, err := cell.PBKDF2IterationCount(parseObject(t, s)); err != nil || n != want {
+			t.Errorf("%s: %d %v", s, n, err)
+		}
+	}
+	for _, s := range []string{`-5`, `true`, `"600000"`, `1.5`, `10000001`} {
+		if _, err := cell.PBKDF2IterationCount(parseObject(t, `{"iterations":`+s+`}`)); err == nil {
+			t.Errorf("iterations %s accepted", s)
+		}
+	}
+	if m, tt, p, err := cell.Argon2Params(parseObject(t, `{"m":65536.0,"t":3,"p":4}`)); err != nil || m != 65536 || tt != 3 || p != 4 {
+		t.Errorf("integral float: %d %d %d %v", m, tt, p, err)
+	}
+	if _, _, _, err := cell.Argon2Params(parseObject(t, `{"m":65536.5,"t":3,"p":4}`)); err == nil {
+		t.Error("m = 65536.5 accepted")
+	}
+}
+
+func TestPassphraseWorkBound(t *testing.T) {
+	maxArgon := parseObject(t, `{"method":"argon2id","wrapped_cek":{"m":1048576,"t":16,"p":16}}`)
+	maxPBKDF2 := parseObject(t, `{"method":"pbkdf2","wrapped_cek":{"iterations":10000000}}`)
+	if cell.KDFWork(maxArgon) != cell.MaxKDFWork || cell.KDFWork(maxPBKDF2) != cell.MaxKDFWork {
+		t.Fatalf("maxima: %d %d, limit %d", cell.KDFWork(maxArgon), cell.KDFWork(maxPBKDF2), cell.MaxKDFWork)
+	}
+	if w := cell.KDFWork(parseObject(t, `{"method":"pbkdf2","wrapped_cek":{"iterations":-5}}`)); w != 0 {
+		t.Fatalf("refused parameters cost %d", w)
+	}
+
+	c := seal(t, []byte("kdf"), []cell.Recipient{cell.PassphraseRecipient("pw", "")}, cell.CreateOptions{})
+	hdr := c.GetObject("header")
+	real := hdr.GetArray("access_map")[0].(*cell.Object)
+	// A copy of the real entry claiming 10,000,000 iterations: deriving it costs the
+	// whole budget and unwraps nothing. Tried first, the real entry would never be.
+	decoy := cell.NewObject()
+	decoy.Set("method", "pbkdf2")
+	wc := cell.NewObject()
+	for _, k := range real.GetObject("wrapped_cek").Keys() {
+		v, _ := real.GetObject("wrapped_cek").Get(k)
+		wc.Set(k, v)
+	}
+	wc.Set("iterations", float64(10000000))
+	decoy.Set("wrapped_cek", wc)
+	hdr.Set("access_map", []cell.Value{decoy, real})
+	rehash(t, c)
+	start := time.Now()
+	if r, err := cell.Open(c, cell.OpenOptions{Passphrases: []string{"pw"}}); err != nil || string(r.Data) != "kdf" {
+		t.Fatalf("cheapest first: %v", err)
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Logf("slow open (%v): was the decoy derived?", d)
+	}
+
+	// Each passphrase supplied is a derivation: 17 × 600,000 iterations passes the limit.
+	hdr.Set("access_map", []cell.Value{real})
+	rehash(t, c)
+	many := make([]string, 17)
+	for i := range many {
+		many[i] = "pw"
+	}
+	if _, err := cell.Open(c, cell.OpenOptions{Passphrases: many}); !errors.Is(err, cell.ErrNoMatchingKey) ||
+		!strings.Contains(err.Error(), "1 passphrase entry was not tried") {
+		t.Fatalf("17 passphrases: %v", err)
+	}
+	if r, err := cell.Open(c, cell.OpenOptions{Passphrases: many[:16]}); err != nil || string(r.Data) != "kdf" {
+		t.Fatalf("16 passphrases: %v", err)
+	}
+}

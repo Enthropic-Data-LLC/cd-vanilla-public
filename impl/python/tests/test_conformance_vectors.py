@@ -54,6 +54,9 @@ REASON_TO_ERROR: dict[str, type[Exception]] = {
     "signature-misplaced": MalformedCellError,
     "padding-invalid": MalformedCellError,
     "access-map-too-large": MalformedCellError,
+    # 2026-11-08
+    "gzip-invalid": MalformedCellError,
+    "kdf-work-exceeded": NoMatchingKeyError,
 }
 
 

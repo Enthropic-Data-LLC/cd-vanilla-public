@@ -42,7 +42,7 @@ Python port — the field names are the spec's, not any one library's.
 
 ## `vectors/`
 
-27 captured cells — 14 that must open, 13 that must be refused — indexed by
+52 captured cells — 24 that must open, 28 that must be refused — indexed by
 `vectors/manifest.json`, plus 225 canonical-serialization vectors. All five
 implementations agree on all of them: every open vector opens in the JavaScript
 reference and in the Python, Go, Rust and Java ports with byte-identical
@@ -97,6 +97,12 @@ AES-KW rather than the access method.
 **Payload edges** — a zero-byte file, all 256 byte values, an astral-plane
 filename and non-ASCII `meta` inside the encrypted manifest.
 
+**Passphrase work** — `v14-kdf-cheapest-first` puts a 10,000,000-iteration decoy
+ahead of the real 600,000-iteration entry, and opens only if the opener tries
+passphrase entries cheapest first. `v14-kdf-max-single` is one entry at the
+PBKDF2 maximum, which must always open. Both are added with
+`make-vectors.py --add-hardening`.
+
 **Refusals** — the half that carries the weight:
 
 | Vector | Caught at §10 step |
@@ -106,7 +112,23 @@ filename and non-ASCII `meta` inside the encrypted manifest.
 | `signature-invalid`, `signature-der`, `forged-access-map` | 3 |
 | `tampered-aad`, `version-downgrade` | 4 — GCM tag |
 | `unsupported-version`, `retention-expired`, `timed-release-locked` | 0 |
-| `quorum-short`, `wrong-key` | key recovery |
+| `quorum-short`, `wrong-key`, `v14-argon2id-weak` | 4 — key recovery |
+| `v14-kdf-work-bound` | 4 — passphrase work bound |
+| `v14-header-signature`, `v14-access-map-too-large` | 1 |
+| `v14-version-relabelled` | 4 — GCM tag |
+| `v14-inner-signature` | 5 |
+| `v14-padding-nonzero`, `v14-padding-length`, `v14-padding-oversized`, `v14-padding-unpadded` | 5 — padded body is exactly `padme(4 + n)` |
+| `v14-gzip-two-members`, `v14-gzip-empty-first-member`, `v14-gzip-trailing-bytes`, `v14-gzip-trailing-zeros`, `v13-gzip-two-members` | 5 — exactly one gzip member, nothing after it |
+
+The gzip and padding rows exist because implementations once disagreed: some
+joined gzip members and some read only the first, some ignored bytes after the
+member and some refused them. One file then opened as different documents in
+different programs. Every opener now refuses all of these.
+
+`reject-v14-kdf-work-bound` holds the real key in a 10,000,000-iteration entry
+behind a cheaper decoy. The decoy is derived first, and the real entry would
+take the total past the limit — the work of one maximum-parameter entry — so it
+is never tried. An opener without the bound opens this cell.
 
 `reject-tampered-aad` is the one to check first in a new port. The cell is
 internally consistent — the attacker edited AAD-bound metadata *and* recomputed

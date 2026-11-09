@@ -146,7 +146,7 @@ go build -o cdcell ./cmd/cdcell
 | WebAuthn PRF access method | ⚠️ unwrap only — the PRF output must come from a CTAP2 layer; browser-only in practice |
 | Shamir M-of-N quorum over GF(256) | ✅ |
 | Canonical serialization, AAD binding (version in the AAD from v1.4), ECDSA sender signature (`header_sig` to v1.3; inside the manifest in v1.4) | ✅ |
-| v1.4: blind entries + trial decryption, Padmé padding, Argon2id | ✅ — all 41 conformance vectors |
+| v1.4: blind entries + trial decryption, Padmé padding, Argon2id | ✅ — all 52 conformance vectors |
 
 > **Dependencies (changed in v1.4).** The Go port is no longer standard-library-only: Argon2id and NFC normalization come from `golang.org/x/crypto` and `golang.org/x/text`, the Go team's own extended modules, pinned in `go.mod`. Neither is in the standard library and writing NFC tables by hand was not an option.
 | `.cell` / `.celz` / `.cdpub` / `.cdkey` | ✅ |

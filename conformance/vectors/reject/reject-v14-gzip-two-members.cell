@@ -1,0 +1,49 @@
+{
+  "version": "1.4",
+  "doc_id": "01CONFORMANCEGZIP0000000000",
+  "created_at": 1787500000,
+  "header": {
+    "prev_hash": null,
+    "threshold": {
+      "required": 1,
+      "of_total": 1
+    },
+    "lifetime": {
+      "type": "permanent",
+      "advisory": {
+        "retain_until": null,
+        "release_at": null,
+        "single_use": false,
+        "minimum_atl": 1
+      },
+      "disposal": {
+        "at": null,
+        "action": "none"
+      }
+    },
+    "policy": {
+      "copy_protection": "standard",
+      "watermark_mode": "none",
+      "created_on_origin": null,
+      "origin_sig": null
+    },
+    "access_map": [
+      {
+        "method": "ecdh-p256",
+        "wrapped_cek": {
+          "eph_spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEU6fjQ+SZKFrxDJvWU6wxmZzxKh9tpnbtGXXBEe4uJ9YhIWO1Kkk7sUdxCsDju+gQhXKWza5YeoIO57yoHd6b7g==",
+          "hkdf_salt": "3J4UEYH7iXyGjjybnwlH9qgAZwXzg+r0IhYePHvUvK0=",
+          "ct": "ltgnEzKcvunErrzpMIfkfXw6AVGCxUyppO0QHDV9wMAOtnFqx+A4Cg=="
+        }
+      }
+    ],
+    "payload_hash": "ENJirUPQwoimeTPKDopkUjEYNiEiWpenN1WoR0SRiZY="
+  },
+  "header_hash": "c3XgFZI3QAKlrJh0vsCjQkTsjHfUwr+CvcpTQdirml4=",
+  "payload": {
+    "alg": "AES-256-GCM",
+    "encoding": "base64+gzip+padme",
+    "iv": "YwJAsEdKyNpikP8Q",
+    "ciphertext": "sS1w+okpzUoFBr32lsjRNfjkaD8nOY3wV9hqCJZ2pL2nEVy4mROTPzmxd9/2GMdnpartkZ46PJXyPsz7kPEO9AKf4F1+prLCfvSDOVFtwfkjTx3cV34gOS63eaUufsZ/W/3N1W+rLmE/N8xPQm8mFXy3JMutLSe9Z2a4sLEAQYX+/mxEVOAo6CeEjiCq33miM9sIcrQLXYaVHR8dkKXyLfunnxngAKtpGN1TLSKP95Up/CYe/1YZZvFJh3tHXFCRaM65ALbTOsy1WDMg3eZm8MGVbXpSILR5LCeXVL9RJzcfsK/cSUwKw3q6DYdvkHRkY3S/T2s9AGijPx7g9QRi1gJzTJU3xyE6ANMHj9WY5RzSI6TCXCt53MVx1jJV7YVvRqTYZR2x5ZKeH0FmsMwwMD+UOdJt3AsHJNvWll7xqDhpRzsuXycYLk/EYkzgmBKd5Nc3X24pixasYE3PMW3wKMd7y9gGvw97QIT7JO5L/9vRuhGao8sD+8+9/6IO7hW1t5dzFLp1/92XM3PjPLVp4QQ5hTybIeI2xwWghHCLmYrfYuHU+nrlAX3SRUAVsJUM0btq/URF5gDs1Zs8kv/8pU4dNlNfMz58yC2NzuylVmxlvEdfYbR9c2sicq6IvkGT6bKbN0Mw4UsoqUjulAXgEy0xLgp1wn9shSjTQY5+bBrDPlZQSPMjepwmqieR+e3k"
+  }
+}

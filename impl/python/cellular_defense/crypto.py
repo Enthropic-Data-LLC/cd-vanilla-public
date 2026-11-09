@@ -76,7 +76,13 @@ def gzip_compress(data: bytes) -> bytes:
 
 
 def gzip_decompress(data: bytes, *, max_bytes: int = MAX_DECOMPRESSED) -> bytes:
-    """Decompress a gzip stream, refusing to exceed ``max_bytes``."""
+    """Decompress exactly one gzip member, refusing to exceed ``max_bytes``.
+
+    Nothing may follow the member: not a second member, not trailing bytes.
+    Implementations once disagreed on both (some joined members, some read only
+    the first; some ignored trailing bytes, some refused), so one file opened as
+    different documents in different programs.
+    """
     decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
     chunks: list[bytes] = []
     total = 0
@@ -92,6 +98,8 @@ def gzip_decompress(data: bytes, *, max_bytes: int = MAX_DECOMPRESSED) -> bytes:
         chunks.append(chunk)
     if not decompressor.eof:
         raise MalformedCellError("truncated gzip stream")
+    if decompressor.unused_data:
+        raise MalformedCellError("data after the end of the gzip member — refusing")
     return b"".join(chunks)
 
 
@@ -200,11 +208,36 @@ def pbkdf2_wrap_cek(cek_or_share: bytes, passphrase: str, *, salt: bytes | None 
     }
 
 
+def json_int(value) -> int | None:
+    """A JSON number with an integral value, as JavaScript's Number.isInteger sees it.
+
+    ``65536.0`` is 65536; ``1.5``, ``true`` and ``"5"`` are not integers. Every
+    implementation reads entry parameters this way, so they agree on which
+    entries are tried and on what each one costs.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    return None
+
+
+def pbkdf2_iterations(wrapped: dict) -> int:
+    """The iteration count: absent, null or 0 means the default; else 1…10,000,000."""
+    raw = (wrapped or {}).get("iterations")
+    if raw is None or (json_int(raw) == 0):
+        return PBKDF2_ITERATIONS
+    n = json_int(raw)
+    if n is None or not 1 <= n <= PBKDF2_MAX_ITERATIONS:
+        raise MalformedCellError("PBKDF2 iteration count out of range — refusing")
+    return n
+
+
 def pbkdf2_unwrap_cek(wrapped: dict, passphrase: str) -> bytes:
     salt = b64decode(wrapped["salt"], field="salt")
-    iterations = int(wrapped.get("iterations") or PBKDF2_ITERATIONS)
-    if not 1 <= iterations <= PBKDF2_MAX_ITERATIONS:
-        raise MalformedCellError("PBKDF2 iteration count out of range — refusing")
+    iterations = pbkdf2_iterations(wrapped)
     wrapping_key = _pbkdf2(passphrase, salt, iterations)
     return keywrap.aes_key_unwrap(wrapping_key, b64decode(wrapped["ct"], field="ct"))
 
@@ -237,9 +270,9 @@ ARGON2_ONE_PASS_MIN_M = 47104
 
 def argon2_params(w: dict) -> tuple[int, int, int]:
     """Validate ``m``/``t``/``p`` from an entry exactly as the reference does."""
-    m, t, p = w.get("m"), w.get("t"), w.get("p")
+    m, t, p = (json_int(w.get(k)) for k in ("m", "t", "p"))
     lim = ARGON2_LIMITS
-    if not all(isinstance(x, int) and not isinstance(x, bool) for x in (m, t, p)) or not (
+    if not all(x is not None for x in (m, t, p)) or not (
         lim["m_min"] <= m <= lim["m_max"] and lim["t_min"] <= t <= lim["t_max"] and lim["p_min"] <= p <= lim["p_max"]
     ):
         raise MalformedCellError("Argon2id parameters out of range — refusing (§6.5)")
@@ -309,9 +342,60 @@ def unpad_body(body: bytes) -> bytes:
     (n,) = __import__("struct").unpack("<I", body[:4])
     if 4 + n > len(body):
         raise MalformedCellError("malformed padded body — length exceeds body")
+    # Exactly the Padmé length: any other would let a writer pad to a size of its
+    # choosing, and give a crafted body room that a conforming one lacks.
+    if len(body) != padme_length(4 + n):
+        raise MalformedCellError("malformed padded body — not the Padmé length")
     if any(body[4 + n :]):
         raise MalformedCellError("malformed padded body — non-zero padding")
     return body[4 : 4 + n]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Passphrase work bound — spec §6, §6.2, §6.5
+#
+# The limits above bound one entry. header_hash is unkeyed, so anyone who can
+# rewrite a file can add entries, each within those limits, and an opener would
+# derive a key for every one. So one open is bounded too: passphrase entries are
+# tried cheapest first, and the opener stops before its key-derivation work
+# would pass that of one maximum-parameter entry. Any single entry within the
+# limits still opens. Work is counted in integers, as in the reference:
+# PBKDF2 = iterations × 2^24, Argon2id = m × t × 10^7, limit = 10^7 × 2^24.
+# ─────────────────────────────────────────────────────────────────────────────
+
+KDF_METHODS = frozenset({"pbkdf2", "argon2id"})
+ARGON2_MAX_WORK = ARGON2_LIMITS["m_max"] * ARGON2_LIMITS["t_max"]  # 2^24
+MAX_KDF_WORK = PBKDF2_MAX_ITERATIONS * ARGON2_MAX_WORK
+
+
+def kdf_work(entry: dict) -> int:
+    """Work for one derivation against ``entry``; 0 when its parameters are refused."""
+    if not isinstance(entry, dict):
+        return 0
+    wrapped = entry.get("wrapped_cek")
+    try:
+        if entry.get("method") == "pbkdf2":
+            return pbkdf2_iterations(wrapped if isinstance(wrapped, dict) else {}) * ARGON2_MAX_WORK
+        if entry.get("method") == "argon2id":
+            m, t, _ = argon2_params(wrapped if isinstance(wrapped, dict) else {})
+            return m * t * PBKDF2_MAX_ITERATIONS
+    except MalformedCellError:
+        pass
+    return 0
+
+
+def access_order(access_map: list) -> list[tuple[int, dict, int]]:
+    """``(index, entry, work)`` in the order an opener tries them.
+
+    Entries that need no passphrase come first, in map order; then passphrase
+    entries cheapest first, ties in map order. ``work`` is ``None`` for an entry
+    that needs no passphrase.
+    """
+    items = []
+    for index, entry in enumerate(access_map):
+        is_kdf = isinstance(entry, dict) and entry.get("method") in KDF_METHODS
+        items.append((index, entry, kdf_work(entry) if is_kdf else None))
+    return sorted(items, key=lambda it: (it[2] is not None, it[2] or 0, it[0]))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

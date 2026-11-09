@@ -18,7 +18,9 @@
     "timed-release-locked",
     "signature-misplaced",
     "padding-invalid",
-    "access-map-too-large"
+    "access-map-too-large",
+    "gzip-invalid",
+    "kdf-work-exceeded"
   ],
   "vectors": [
     {
@@ -899,6 +901,176 @@
         ]
       },
       "notes": "Those three fields belong to legacy v2.0 cells (cd_version, no version) only. On any supported version the manifest is always parsed and the inner signature always verified; the filename, media type and signer come from inside the ciphertext."
+    },
+    {
+      "id": "reject-v14-gzip-two-members",
+      "file": "reject/reject-v14-gzip-two-members.cell",
+      "description": "v1.4 body holding two gzip members; the padding is correct",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.4",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "gzip-invalid",
+      "reject_at_step": 5,
+      "notes": "A body is exactly one gzip member with nothing after it. Implementations once disagreed: some joined members, some read only the first; some ignored trailing bytes, some refused. One file then opened as different documents."
+    },
+    {
+      "id": "reject-v14-gzip-empty-first-member",
+      "file": "reject/reject-v14-gzip-empty-first-member.cell",
+      "description": "v1.4 body holding an empty gzip member followed by the real one; the padding is correct",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.4",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "gzip-invalid",
+      "reject_at_step": 5,
+      "notes": "A body is exactly one gzip member with nothing after it. Implementations once disagreed: some joined members, some read only the first; some ignored trailing bytes, some refused. One file then opened as different documents."
+    },
+    {
+      "id": "reject-v14-gzip-trailing-bytes",
+      "file": "reject/reject-v14-gzip-trailing-bytes.cell",
+      "description": "v1.4 body holding one gzip member plus four trailing bytes; the padding is correct",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.4",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "gzip-invalid",
+      "reject_at_step": 5,
+      "notes": "A body is exactly one gzip member with nothing after it. Implementations once disagreed: some joined members, some read only the first; some ignored trailing bytes, some refused. One file then opened as different documents."
+    },
+    {
+      "id": "reject-v14-gzip-trailing-zeros",
+      "file": "reject/reject-v14-gzip-trailing-zeros.cell",
+      "description": "v1.4 body holding one gzip member plus eight zero bytes (zlib's gunzip skips these); the padding is correct",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.4",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "gzip-invalid",
+      "reject_at_step": 5,
+      "notes": "A body is exactly one gzip member with nothing after it. Implementations once disagreed: some joined members, some read only the first; some ignored trailing bytes, some refused. One file then opened as different documents."
+    },
+    {
+      "id": "reject-v13-gzip-two-members",
+      "file": "reject/reject-v13-gzip-two-members.cell",
+      "description": "v1.3 (unpadded) body holding two gzip members: the rule is not v1.4-only",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "gzip-invalid",
+      "reject_at_step": 5,
+      "notes": "A body is exactly one gzip member with nothing after it. Implementations once disagreed: some joined members, some read only the first; some ignored trailing bytes, some refused. One file then opened as different documents."
+    },
+    {
+      "id": "reject-v14-padding-oversized",
+      "file": "reject/reject-v14-padding-oversized.cell",
+      "description": "v1.4 body padded 512 zero bytes past its Padmé length",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.4",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "padding-invalid",
+      "reject_at_step": 5,
+      "notes": "The padded body is exactly padme(4 + n) bytes (§5.4); any other length is refused."
+    },
+    {
+      "id": "reject-v14-padding-unpadded",
+      "file": "reject/reject-v14-padding-unpadded.cell",
+      "description": "v1.4 body framed but not padded",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.4",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "padding-invalid",
+      "reject_at_step": 5,
+      "notes": "The padded body is exactly padme(4 + n) bytes (§5.4); any other length is refused."
+    },
+    {
+      "id": "v14-kdf-cheapest-first",
+      "file": "open/v14-kdf-cheapest-first.cell",
+      "description": "v1.4 passphrase cell with a 10,000,000-iteration decoy entry placed before the real 600,000-iteration one",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.4",
+      "open_with": {
+        "passphrases": [
+          "conformance-test-passphrase"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "notes": "Work per derivation: PBKDF2 = iterations × 2^24; Argon2id = m × t × 10^7. One open spends at most 10^7 × 2^24, the cost of one maximum-parameter entry. Passphrase entries are tried cheapest first. The real entry is cheaper, so it is tried first and opens the cell; an opener that tried the decoy first would have spent the whole budget on it."
+    },
+    {
+      "id": "v14-kdf-max-single",
+      "file": "open/v14-kdf-max-single.cell",
+      "description": "v1.4 cell whose only entry is PBKDF2 at 10,000,000 iterations, the maximum",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.4",
+      "open_with": {
+        "passphrases": [
+          "conformance-test-passphrase"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "notes": "Work per derivation: PBKDF2 = iterations × 2^24; Argon2id = m × t × 10^7. One open spends at most 10^7 × 2^24, the cost of one maximum-parameter entry. Passphrase entries are tried cheapest first. A single entry within the limits always fits. This vector runs one maximum-cost derivation."
+    },
+    {
+      "id": "reject-v14-kdf-work-bound",
+      "file": "reject/reject-v14-kdf-work-bound.cell",
+      "description": "v1.4 cell: the real PBKDF2 entry at 10,000,000 iterations plus a cheaper 600,000-iteration decoy",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.4",
+      "open_with": {
+        "passphrases": [
+          "conformance-test-passphrase"
+        ]
+      },
+      "reject_reason": "kdf-work-exceeded",
+      "reject_at_step": 4,
+      "notes": "Work per derivation: PBKDF2 = iterations × 2^24; Argon2id = m × t × 10^7. One open spends at most 10^7 × 2^24, the cost of one maximum-parameter entry. Passphrase entries are tried cheapest first. The decoy is tried first (600,000 × 2^24); the real entry would take the total past the limit, so it is never derived. An opener without the bound opens this cell."
     }
   ]
 }

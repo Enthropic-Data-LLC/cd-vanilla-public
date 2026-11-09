@@ -832,6 +832,88 @@ test('v1.4', 'an access map larger than the limit is refused before any key is t
   eq(tried, 0);
 });
 
+test('v1.4', 'a gzip body is exactly one member with nothing after it', async () => {
+  const cat = (...parts) => {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let i = 0;
+    for (const p of parts) { out.set(p, i); i += p.length; }
+    return out;
+  };
+  const a = await w.gzip(enc('first')), b = await w.gzip(enc('SECOND')), e = await w.gzip(new Uint8Array(0));
+  eq(new TextDecoder().decode(await w.gunzip(a)), 'first');
+  eq((await w.gunzip(e)).length, 0);
+  eq(w.crc32(enc('123456789')), 0xcbf43926);
+  const badCrc = a.slice(); badCrc[badCrc.length - 5] ^= 1;
+  for (const [name, bytes] of [
+    ['two members', cat(a, b)], ['an empty first member', cat(e, b)], ['trailing bytes', cat(a, enc('JUNK'))],
+    ['one trailing zero', cat(a, new Uint8Array(1))], ['eight trailing zeros', cat(a, new Uint8Array(8))],
+    ['a bad CRC', badCrc], ['a missing trailer byte', a.slice(0, -1)],
+  ]) {
+    let opened = true;
+    try { await w.gunzip(bytes); } catch { opened = false; }
+    assert(!opened, `gunzip accepted ${name}`);
+  }
+});
+
+test('v1.4', 'a padded body is exactly the Padmé length', () => {
+  const body = w.padBody(new Uint8Array([1, 2, 3]));
+  const longer = new Uint8Array(body.length + 512); longer.set(body);
+  for (const [name, b] of [['longer', longer], ['unpadded', body.slice(0, 7)], ['one byte short', body.slice(0, -1)]]) {
+    let msg = ''; try { w.unpadBody(b); } catch (e) { msg = e.message; }
+    assert(/Padmé length/.test(msg), `${name} body accepted (${msg || 'no error'})`);
+  }
+});
+
+test('v1.4', 'passphrase entries: cheapest first, and no more work than one maximum-parameter entry', async () => {
+  const cell = await w.cellCreate(mkFile('kdf', 'k.txt', 'text/plain'), [{ method: 'pbkdf2', passphrase: 'pw' }]);
+  const real = cell.header.access_map[0];
+  const setMap = async (map) => {
+    cell.header.access_map = map;   // what anyone can do: header_hash is unkeyed
+    cell.header_hash = w.toB64(await w.sha256(w.serializeHeader(cell.header, cell.version)));
+  };
+  const seen = [];
+  const spy = (pass) => async (r) => {
+    seen.push(r === real ? 'real' : `${r.method}:${r.wrapped_cek.iterations ?? r.wrapped_cek.m}`);
+    return r === real && pass ? w.pbkdf2UnwrapCek(r.wrapped_cek, pass) : null;
+  };
+  const maxArgon = { method: 'argon2id', wrapped_cek: { m: 1048576, t: 16, p: 16, salt: real.wrapped_cek.salt, ct: real.wrapped_cek.ct } };
+  const pbkdf2At = (n) => ({ method: 'pbkdf2', wrapped_cek: { ...real.wrapped_cek, iterations: n } });
+
+  eq(w.kdfWork(real), 600000 * 2 ** 24);
+  eq(w.kdfWork(maxArgon), 1048576 * 16 * 1e7);
+  eq(w.kdfWork(pbkdf2At(10000000)), w.kdfWork(maxArgon), 'the two maxima cost the same');
+  for (const it of [-5, true, '600000', 1.5, 10000001]) eq(w.kdfWork(pbkdf2At(it)), 0, `iterations ${it}`);
+  eq(w.kdfWork(pbkdf2At(0)), w.kdfWork(real), 'iterations 0 is the default');
+  eq(w.kdfWork({ method: 'ecdh-p256', wrapped_cek: {} }), 0);
+
+  // 255 maximum-cost Argon2id entries prepended: the real entry is tried first, nothing else.
+  await setMap([...Array(255).fill(maxArgon), real]);
+  eq(new TextDecoder().decode((await w.cellOpen(cell, spy('pw'))).bytes), 'kdf');
+  eq(seen.join(), 'real');
+  seen.length = 0;
+  await rejects(() => w.cellOpen(cell, spy(null)), '255 passphrase entries were not tried');
+  eq(seen.join(), 'real');
+
+  // A lone maximum-parameter entry is still tried; two halves fit exactly; one more iteration does not.
+  for (const [map, expectSeen, expectMsg] of [
+    [[maxArgon], 'argon2id:1048576', 'No matching key'],
+    [[pbkdf2At(5000000), pbkdf2At(5000000)], 'pbkdf2:5000000,pbkdf2:5000000', 'No matching key'],
+    [[pbkdf2At(5000001), pbkdf2At(5000000)], 'pbkdf2:5000000', '1 passphrase entry was not tried'],
+  ]) {
+    await setMap(map); seen.length = 0;
+    await rejects(() => w.cellOpen(cell, spy(null)), expectMsg);
+    eq(seen.join(), expectSeen);
+  }
+
+  // Entries that need no passphrase come first; a cancelled open stops before the next entry.
+  const ecdh = { method: 'ecdh-p256', wrapped_cek: {} };
+  await setMap([pbkdf2At(600000), ecdh]); seen.length = 0;
+  await rejects(() => w.cellOpen(cell, spy(null)), 'No matching key');
+  eq(seen.join(), 'ecdh-p256:undefined,pbkdf2:600000');
+  const ac = new AbortController(); let attempts = 0;
+  await rejects(() => w.cellOpen(cell, spy(null), { signal: ac.signal, onAttempt: () => { attempts++; ac.abort(); } }), 'Cancelled');
+  eq(attempts, 1);
+});
+
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
 async function runAll() {

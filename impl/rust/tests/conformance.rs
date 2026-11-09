@@ -73,6 +73,8 @@ fn matches_reason(err: &Error, reason: &str) -> bool {
             | ("signature-misplaced", Error::Malformed(_))
             | ("padding-invalid", Error::Malformed(_))
             | ("access-map-too-large", Error::Malformed(_))
+            | ("gzip-invalid", Error::Malformed(_))
+            | ("kdf-work-exceeded", Error::KdfWorkExceeded { .. })
     )
 }
 

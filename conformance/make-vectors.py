@@ -21,6 +21,7 @@ a version nobody actually tests.
                                                      # leaving every committed vector as is
     python3 conformance/make-vectors.py --add-derived  # (re)write only the vectors derived
                                                        # from committed ones (DERIVED_IDS)
+    python3 conformance/make-vectors.py --add-hardening  # (re)write only HARDENING_IDS
 """
 
 from __future__ import annotations
@@ -245,6 +246,8 @@ REJECT_REASONS = [
     "retention-expired", "timed-release-locked",
     # v1.4
     "signature-misplaced", "padding-invalid", "access-map-too-large",
+    # 2026-11-08 (pen test of 2026-11-05, M2/L5/M4)
+    "gzip-invalid", "kdf-work-exceeded",
 ]
 
 
@@ -441,6 +444,148 @@ def add_derived_only() -> int:
     return 0
 
 
+#: Vectors added 2026-11-08 after the pen test of 2026-11-05 (KB #2251, #2252).
+HARDENING_IDS = (
+    "reject-v14-gzip-two-members", "reject-v14-gzip-empty-first-member",
+    "reject-v14-gzip-trailing-bytes", "reject-v14-gzip-trailing-zeros",
+    "reject-v13-gzip-two-members",
+    "reject-v14-padding-oversized", "reject-v14-padding-unpadded",
+    "v14-kdf-cheapest-first", "v14-kdf-max-single", "reject-v14-kdf-work-bound",
+)
+
+
+def seal_hand(version: str, body: bytes, recipient: KeyRecord) -> dict:
+    """A 1.3 or 1.4 cell sealed by hand around an exact body, so it can be malformed on purpose."""
+    cek = secrets.token_bytes(32)
+    header: dict = {
+        "prev_hash": None,
+        "threshold": {"required": 1, "of_total": 1},
+        "lifetime": {"type": "permanent",
+                     "advisory": {"retain_until": None, "release_at": None, "single_use": False, "minimum_atl": 1},
+                     "disposal": {"at": None, "action": "none"}},
+        "policy": {"copy_protection": "standard", "watermark_mode": "none",
+                   "created_on_origin": None, "origin_sig": None},
+    }
+    iv, ciphertext = crypto.aes_gcm_encrypt(cek, body, cell_aad(header, version))
+    entry = {"method": "ecdh-p256", "wrapped_cek": crypto.ecdh_wrap_cek(cek, recipient.spki)}
+    if version == "1.3":
+        entry = {"method": "ecdh-p256", "label": "alice", "fingerprint": recipient.fingerprint, **entry}
+    header["access_map"] = [entry]
+    header["payload_hash"] = b64encode(crypto.sha256(ciphertext))
+    return {
+        "version": version, "doc_id": "01CONFORMANCEGZIP0000000000", "created_at": CREATED_AT,
+        "header": header,
+        "header_hash": b64encode(crypto.sha256(serialize_header(header, version))),
+        "payload": {"alg": "AES-256-GCM",
+                    "encoding": "base64+gzip+padme" if version == "1.4" else "base64+gzip",
+                    "iv": b64encode(iv), "ciphertext": b64encode(ciphertext)},
+    }
+
+
+def build_hardening(deal_file: str) -> None:
+    """One file, one document (§5, §5.4), and a bounded passphrase cost per open (§6)."""
+    alice = key("alice")
+    manifest = json.dumps({"filename": "deal.txt", "content_type": "text/plain", "size": len(DEAL)},
+                          separators=(",", ":")).encode("utf-8")
+    framed = struct.pack("<I", len(manifest)) + manifest + DEAL
+    gz = crypto.gzip_compress(framed)
+    second = crypto.gzip_compress(b"SECOND MEMBER: a different document\n")
+    one_doc = ("A body is exactly one gzip member with nothing after it. Implementations once "
+               "disagreed: some joined members, some read only the first; some ignored trailing "
+               "bytes, some refused. One file then opened as different documents.")
+
+    for vid, body, what in [
+        ("reject-v14-gzip-two-members", gz + second, "two gzip members"),
+        ("reject-v14-gzip-empty-first-member", crypto.gzip_compress(b"") + gz,
+         "an empty gzip member followed by the real one"),
+        ("reject-v14-gzip-trailing-bytes", gz + b"JUNK", "one gzip member plus four trailing bytes"),
+        ("reject-v14-gzip-trailing-zeros", gz + bytes(8),
+         "one gzip member plus eight zero bytes (zlib's gunzip skips these)"),
+    ]:
+        add(vid, seal_hand("1.4", crypto.pad_body(body), alice), expect="reject",
+            description=f"v1.4 body holding {what}; the padding is correct",
+            open_with={"keys": ["alice"]}, reject_reason="gzip-invalid", reject_at_step=5,
+            notes=one_doc)
+
+    add("reject-v13-gzip-two-members", seal_hand("1.3", gz + second, alice), expect="reject",
+        description="v1.3 (unpadded) body holding two gzip members: the rule is not v1.4-only",
+        open_with={"keys": ["alice"]}, reject_reason="gzip-invalid", reject_at_step=5,
+        notes=one_doc)
+
+    padded = crypto.pad_body(gz)
+    add("reject-v14-padding-oversized", seal_hand("1.4", padded + bytes(512), alice), expect="reject",
+        description="v1.4 body padded 512 zero bytes past its Padmé length",
+        open_with={"keys": ["alice"]}, reject_reason="padding-invalid", reject_at_step=5,
+        notes="The padded body is exactly padme(4 + n) bytes (§5.4); any other length is refused.")
+    add("reject-v14-padding-unpadded", seal_hand("1.4", padded[:4 + len(gz)], alice), expect="reject",
+        description="v1.4 body framed but not padded",
+        open_with={"keys": ["alice"]}, reject_reason="padding-invalid", reject_at_step=5,
+        notes="The padded body is exactly padme(4 + n) bytes (§5.4); any other length is refused.")
+
+    # ── Passphrase work bound (§6) ────────────────────────────────────────
+    bound = ("Work per derivation: PBKDF2 = iterations × 2^24; Argon2id = m × t × 10^7. One open "
+             "spends at most 10^7 × 2^24, the cost of one maximum-parameter entry. Passphrase "
+             "entries are tried cheapest first.")
+    base = _cell_create(DEAL, "deal.txt", [Recipient.passphrase_(PASSPHRASE)], version="1.4",
+                        content_type="text/plain", created_at=CREATED_AT)
+    real600k = base["header"]["access_map"][0]
+
+    def clone(source: dict) -> dict:
+        return json.loads(json.dumps(source))
+
+    decoy = clone(real600k)
+    decoy["wrapped_cek"]["iterations"] = 10_000_000   # a different key: unwraps nothing
+    c = clone(base)
+    c["header"]["access_map"] = [decoy, real600k]
+    add("v14-kdf-cheapest-first", rehash(c), expect="open",
+        description="v1.4 passphrase cell with a 10,000,000-iteration decoy entry placed before "
+                    "the real 600,000-iteration one",
+        open_with={"passphrases": [PASSPHRASE]}, plaintext=DEAL, payload_file=deal_file,
+        filename="deal.txt", content_type="text/plain",
+        notes=bound + " The real entry is cheaper, so it is tried first and opens the cell; an "
+                      "opener that tried the decoy first would have spent the whole budget on it.")
+
+    # The same ciphertext, its key rewrapped at the PBKDF2 maximum.
+    cek = crypto.pbkdf2_unwrap_cek(real600k["wrapped_cek"], PASSPHRASE)
+    salt = secrets.token_bytes(32)
+    real10m = {"method": "pbkdf2", "wrapped_cek": {
+        "salt": b64encode(salt), "iterations": 10_000_000,
+        "ct": b64encode(keywrap.aes_key_wrap(crypto._pbkdf2(PASSPHRASE, salt, 10_000_000), cek))}}
+    c = clone(base)
+    c["header"]["access_map"] = [real10m]
+    add("v14-kdf-max-single", rehash(c), expect="open",
+        description="v1.4 cell whose only entry is PBKDF2 at 10,000,000 iterations, the maximum",
+        open_with={"passphrases": [PASSPHRASE]}, plaintext=DEAL, payload_file=deal_file,
+        filename="deal.txt", content_type="text/plain",
+        notes=bound + " A single entry within the limits always fits. This vector runs one "
+                      "maximum-cost derivation.")
+
+    cheap = clone(real10m)
+    cheap["wrapped_cek"]["iterations"] = 600_000      # a different key: unwraps nothing
+    c = clone(base)
+    c["header"]["access_map"] = [real10m, cheap]
+    add("reject-v14-kdf-work-bound", rehash(c), expect="reject",
+        description="v1.4 cell: the real PBKDF2 entry at 10,000,000 iterations plus a cheaper "
+                    "600,000-iteration decoy",
+        open_with={"passphrases": [PASSPHRASE]}, reject_reason="kdf-work-exceeded", reject_at_step=4,
+        notes=bound + " The decoy is tried first (600,000 × 2^24); the real entry would take the "
+                      "total past the limit, so it is never derived. An opener without the bound "
+                      "opens this cell.")
+
+
+def add_hardening_only() -> int:
+    """Rewrite just HARDENING_IDS; every other committed vector stays byte-for-byte."""
+    existing = json.loads((VECTORS / "manifest.json").read_text())
+    for v in existing["vectors"]:
+        if v["id"] in HARDENING_IDS:
+            (VECTORS / v["file"]).unlink(missing_ok=True)
+    vectors.extend(v for v in existing["vectors"] if v["id"] not in HARDENING_IDS)
+    build_hardening("payloads/deal.txt")
+    write_manifest()
+    print(f"wrote {len(HARDENING_IDS)} hardening vectors; manifest now holds {len(vectors)}")
+    return 0
+
+
 def write_manifest() -> None:
     manifest = {
         "version": 1,
@@ -459,13 +604,14 @@ def write_manifest() -> None:
 def add_v14_only() -> int:
     """Rewrite just the v1.4 vectors; every committed vector stays byte-for-byte."""
     existing = json.loads((VECTORS / "manifest.json").read_text())
-    is_v14 = lambda v: v["id"].startswith(("v14-", "reject-v14-"))
+    is_v14 = lambda v: v["id"].startswith(("v14-", "reject-v14-")) or v["id"] in HARDENING_IDS
     for v in existing["vectors"]:
         if is_v14(v):
             (VECTORS / v["file"]).unlink(missing_ok=True)
     vectors.extend(v for v in existing["vectors"] if not is_v14(v))
     build_v14("payloads/deal.txt", "payloads/unicode.txt")
     build_derived("payloads/deal.txt")
+    build_hardening("payloads/deal.txt")
     write_manifest()
     added = sum(1 for v in vectors if is_v14(v))
     print(f"wrote {added} v1.4 vectors; manifest now holds {len(vectors)}")
@@ -753,6 +899,7 @@ def main() -> int:
 
     build_v14(deal_file, unicode_file)
     build_derived(deal_file)
+    build_hardening(deal_file)
     write_manifest()
 
     opens =sum(1 for v in vectors if v["expect"] == "open")
@@ -763,4 +910,6 @@ def main() -> int:
 if __name__ == "__main__":
     if "--add-derived" in sys.argv[1:]:
         raise SystemExit(add_derived_only())
+    if "--add-hardening" in sys.argv[1:]:
+        raise SystemExit(add_hardening_only())
     raise SystemExit(add_v14_only() if "--add-v14" in sys.argv[1:] else main())

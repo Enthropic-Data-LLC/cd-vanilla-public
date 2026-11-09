@@ -713,12 +713,30 @@ fn open_cell(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
         .unwrap_or(1)
         .max(1) as usize;
 
-    // Step 4: recover the CEK.
+    // Step 4: recover the CEK, in access_order and under the passphrase work
+    // bound (§6). try_unwrap derives once per passphrase supplied, and each
+    // passphrase entry is charged that.
+    let per_entry = opts.passphrases.len() as u64;
+    let mut spent: u64 = 0;
+    let mut skipped = 0usize;
+    let mut attempt = |entry: &Value, kdf: bool, work: u64| -> Option<Vec<u8>> {
+        if kdf && work > 0 && per_entry > 0 {
+            match work.checked_mul(per_entry) {
+                Some(cost) if cost <= crypto::MAX_KDF_WORK - spent => spent += cost,
+                _ => {
+                    skipped += 1;
+                    return None;
+                }
+            }
+        }
+        // A wrong key here says nothing about the next entry.
+        try_unwrap(entry, opts)
+    };
+    let order = access_order(&access_map);
     let (cek, used_recipient) = if required > 1 {
         let mut shares = Vec::new();
-        for (index, entry) in access_map.iter().enumerate() {
-            // A wrong key here says nothing about the next entry.
-            if let Some(material) = try_unwrap(entry, opts) {
+        for &(index, entry, kdf, work) in &order {
+            if let Some(material) = attempt(entry, kdf, work) {
                 let x = entry
                     .get("share_index")
                     .and_then(|v| v.as_u64())
@@ -730,6 +748,9 @@ fn open_cell(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
             }
         }
         if shares.len() < required {
+            if skipped > 0 {
+                return Err(Error::KdfWorkExceeded { not_tried: skipped });
+            }
             return Err(Error::QuorumNotMet {
                 needed: required,
                 unlocked: shares.len(),
@@ -742,8 +763,8 @@ fn open_cell(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
         )
     } else {
         let mut found = None;
-        for entry in &access_map {
-            if let Some(material) = try_unwrap(entry, opts) {
+        for &(_, entry, kdf, work) in &order {
+            if let Some(material) = attempt(entry, kdf, work) {
                 let label = entry
                     .get("label")
                     .and_then(|v| v.as_str())
@@ -753,7 +774,11 @@ fn open_cell(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
                 break;
             }
         }
-        found.ok_or(Error::NoMatchingKey)?
+        match found {
+            Some(found) => found,
+            None if skipped > 0 => return Err(Error::KdfWorkExceeded { not_tried: skipped }),
+            None => return Err(Error::NoMatchingKey),
+        }
     };
 
     let aad = if is_legacy {
@@ -906,6 +931,25 @@ fn open_cell(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
     })
 }
 
+/// The order an opener tries entries in: `(index, entry, is_passphrase, work)`.
+///
+/// Entries that need no passphrase come first, in map order; then passphrase
+/// entries cheapest first, ties in map order. `index` is the map position, which
+/// a quorum share falls back on.
+fn access_order(access_map: &[Value]) -> Vec<(usize, &Value, bool, u64)> {
+    let mut items: Vec<_> = access_map
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let method = entry.get("method").and_then(|v| v.as_str());
+            let kdf = matches!(method, Some("pbkdf2") | Some("argon2id"));
+            (index, entry, kdf, if kdf { crypto::kdf_work(entry) } else { 0 })
+        })
+        .collect();
+    items.sort_by_key(|&(index, _, kdf, work)| (kdf, if kdf { work } else { 0 }, index));
+    items
+}
+
 /// Attempt one access-map entry with whatever material was supplied.
 ///
 /// Returns `None` rather than an error: a wrong key for this entry says nothing
@@ -946,12 +990,7 @@ fn try_unwrap(entry: &Value, opts: &OpenOptions) -> Option<Vec<u8>> {
         "pbkdf2" => {
             let salt = field("salt")?;
             let ct = field("ct")?;
-            let iterations = wrapped
-                .get("iterations")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(crypto::PBKDF2_ITERATIONS as u64);
-            // Saturate rather than wrap, so 2^32 + 600000 is refused instead of opening as 600000.
-            let iterations = u32::try_from(iterations).unwrap_or(u32::MAX);
+            let iterations = crypto::pbkdf2_iterations(wrapped).ok()?;
             for passphrase in &opts.passphrases {
                 if let Ok(material) = crypto::pbkdf2_unwrap_cek(salt, iterations, ct, passphrase) {
                     return Some(material);

@@ -1,0 +1,49 @@
+{
+  "version": "1.4",
+  "doc_id": "01CONFORMANCEGZIP0000000000",
+  "created_at": 1787500000,
+  "header": {
+    "prev_hash": null,
+    "threshold": {
+      "required": 1,
+      "of_total": 1
+    },
+    "lifetime": {
+      "type": "permanent",
+      "advisory": {
+        "retain_until": null,
+        "release_at": null,
+        "single_use": false,
+        "minimum_atl": 1
+      },
+      "disposal": {
+        "at": null,
+        "action": "none"
+      }
+    },
+    "policy": {
+      "copy_protection": "standard",
+      "watermark_mode": "none",
+      "created_on_origin": null,
+      "origin_sig": null
+    },
+    "access_map": [
+      {
+        "method": "ecdh-p256",
+        "wrapped_cek": {
+          "eph_spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9ZUPL2djX8ZB9iNcXAivAyCcQx+q+W5nPzd2QI7YBSzXrmfpt/MKV+UjeHk/TruTWzcYathtif8sZyaSV9NA3A==",
+          "hkdf_salt": "tR0LUP2TdsjCqRJ1D/LI+HV6cT13CXN179v0fqVTGvQ=",
+          "ct": "ikE8sJTWSj9z89/2Ck9iXekDyIjV2m88DCXQ4tzDvY3ZFDw2TqJEFQ=="
+        }
+      }
+    ],
+    "payload_hash": "8BQairz2/YZsDvW81uQlaME/BJ1s7n77PoJrXPdSckA="
+  },
+  "header_hash": "J3m0KeeoAEPO26FTO0t6Lk7hfEeGNnxILt5r8+rauOc=",
+  "payload": {
+    "alg": "AES-256-GCM",
+    "encoding": "base64+gzip+padme",
+    "iv": "hm4L37VpGUFu33fF",
+    "ciphertext": "tFjgGFZgGNVSkcKUrbJeLTFb25ixXwDSBSWfEA1Nbq6BleL5HXLmbQBMwbybW26TpTaWgPB2xlgmyWrQwtDDRzDxATLW5AYIuNuvXXQyz33wJU0Z5aScRNc7eoreLBqm+roo1JHPjdGgQN85Nr3+kjPiUKqJu2oxZllfXg1+wQulZFhJz1FqCqJKx7GwA/hs6gsuYoRvdwM+qb3H0IECe7Cugnyz0St9P4G8b8zg6wJ1JVhpqV4+TNhKxBaYA7QNI+VRBwnC50BL3nI4sCinqZFBAoBomI3fUxXA4UV4zB/1GjHAA4EpmU5hrqlSH9ciM00bq53Zoj65fqAht/1Ep/Ybsva0wr9SXsboPRkv0UbpiScoMl6pYR/3s49nStyfcqkMTUdGP9svcv1qVtrfD5oyoYgjSvHll8mECMSOlUpQuUA7OFhsBwBEq6mFtpJIewqiXhadUDOkTIp6kqDEI6l3Ptve/OmQ7V6FYoi5eyDa0ILpMaCAQpoNW/g856DzivPmaRSx2SW8tjomcnZ9cJ3pnZltrp0AgZvVpsYQ7tR8pgEJLELls5i2zvp9axnQAaXd7YJbaerfUgMcX1XmQ39UQ1wi1Zj8llTmknlRRQcW6gHW9D3STD0gDQPUCvicAEiDtfJJLgVqO0esny1J94rdx4bYgMfSf1CqvbTHV+Ee7ke/iRg1ny89wM4tLmS1"
+  }
+}

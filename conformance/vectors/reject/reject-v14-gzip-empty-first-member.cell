@@ -1,0 +1,49 @@
+{
+  "version": "1.4",
+  "doc_id": "01CONFORMANCEGZIP0000000000",
+  "created_at": 1787500000,
+  "header": {
+    "prev_hash": null,
+    "threshold": {
+      "required": 1,
+      "of_total": 1
+    },
+    "lifetime": {
+      "type": "permanent",
+      "advisory": {
+        "retain_until": null,
+        "release_at": null,
+        "single_use": false,
+        "minimum_atl": 1
+      },
+      "disposal": {
+        "at": null,
+        "action": "none"
+      }
+    },
+    "policy": {
+      "copy_protection": "standard",
+      "watermark_mode": "none",
+      "created_on_origin": null,
+      "origin_sig": null
+    },
+    "access_map": [
+      {
+        "method": "ecdh-p256",
+        "wrapped_cek": {
+          "eph_spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEpMxdAb7t4epAl3IvDv5gtfqNQZFSdTWSPiTTUIWem83HUFM2oyXPzFhUsVo0b2UeD+N1DiQOWNaYwNjaHG9s/Q==",
+          "hkdf_salt": "9ze/JBpb85DgBAxPWQDUfTNdPkAm9sMuIus2GE5gmzc=",
+          "ct": "vcQw3gTr4U3WuB+DZ5QVznIEXDC+pCSVUKkkiJ/OJ/dAitaksfHZNg=="
+        }
+      }
+    ],
+    "payload_hash": "7GiQ+Pg1xz8uoPqndg6U9HLrCw6cZ2tSEc18hqp8ob4="
+  },
+  "header_hash": "N5FTMQl5TKnIq2qY24RQagQzNK6is7nYPXTPiAB/70A=",
+  "payload": {
+    "alg": "AES-256-GCM",
+    "encoding": "base64+gzip+padme",
+    "iv": "Jj/uPnvjnb3yE5cA",
+    "ciphertext": "Xx/zI/5ib+NAJUV6Ge0+907TatiBjUVsbQQF/t8S7KD0CoG3ykus85VFa1vwHu7IlqbDoyysvow90xtNZHm0/G8XQm93pRwhVh5/swsOdlYlUj5Jv55R7hNG+hAD0kWGupZma8UPlgpdThmwOWlcAzSxfJpQJCfEy7BbclKfoyinbbetDrVtAAwbdXa8tPxOPlgOzTXw9xR/cGyUPTGIWRtLouPoWaMbJPhpLuTfzQGweriRS7zx6mHiHEpJ0HiMMrppJXMjplM4fKT35hDQZhiRWmDdjWq9RubguT+xe4/7qw0RWKJYF19UVc8EtxgZH7VYE2d9VFqMGGjkqfcPMvm9J03T/7VKiYW06hKKwcyugtW9VtFRuSIS/J7rrYCBBT+ovfYcViq8kZeg2ZMSp546F/TMVMtfaqUOtU1d/mxEMEkaK1zLrHZsg2HEsn+4d++1iGD9M6RnOSPbx0pM6QutWffad0OPuMvSTD0MP/5W5tGuXA5JpSABcLzC2JcrM49nGyt3i1p59Wr8JbIS3xngSjSRiWRBv4pfVGS+LBJS3iYItnijS85hnLNUKf4jqlohuL+BQ0kEKYOLTN4swBTAGxrqkY1HsLwcHn2rc969kMvkmOGIBdDbN0h0UNUnp7mhrJ2rlFT9RT9CCpKZDcz2qlt1BUTy+PObEp4nf8fJFQYvQsppTnr1CUPmbpVI"
+  }
+}

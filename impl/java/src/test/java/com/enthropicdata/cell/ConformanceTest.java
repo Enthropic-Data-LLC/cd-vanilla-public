@@ -73,7 +73,8 @@ class ConformanceTest {
                     CellException.Integrity.class;
             case "signature-invalid" -> CellException.Signature.class;
             case "signature-der-encoded", "signature-misplaced", "padding-invalid",
-                    "access-map-too-large" -> CellException.Malformed.class;
+                    "access-map-too-large", "gzip-invalid" -> CellException.Malformed.class;
+            case "kdf-work-exceeded" -> CellException.NoMatchingKey.class;
             case "aad-mismatch" -> CellException.Decryption.class;
             case "unsupported-version" -> CellException.UnsupportedVersion.class;
             case "quorum-not-met" -> CellException.QuorumNotMet.class;

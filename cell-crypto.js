@@ -100,21 +100,101 @@ async function gzip(bytes) {
   const w = cs.writable.getWriter(); w.write(bytes); w.close();
   return collectStream(cs.readable);
 }
+// A body is exactly one gzip member (RFC 1952) with nothing after it. Openers
+// once disagreed here: given two members, some returned both and some only the
+// first; given trailing bytes, some ignored them and some refused. One file then
+// opened as different documents in different programs. DecompressionStream
+// cannot be trusted to refuse either shape (Node joins members, and skips zero
+// bytes after one), so the header and trailer are read here, and only the
+// deflate data between them goes to the runtime's decoder.
 async function gunzip(bytes) {
-  const ds = new DecompressionStream('gzip');
-  const w = ds.writable.getWriter(); w.write(bytes); w.close();
-  return collectStream(ds.readable);
+  const start = gzipHeaderEnd(bytes);
+  const end = bytes.length - 8;               // CRC-32 and size, little-endian
+  if (end <= start) throw new Error('Malformed gzip stream — truncated');
+  const deflated = bytes.subarray(start, end);
+  const mode = await rawStreamEndCheck();
+  const out = await inflateRaw(deflated);     // a runtime that refuses trailing data refuses it here
+  if (mode === 'truncation') {
+    // This runtime ignores data after the end of a deflate stream, so check
+    // that the stream ends in its last byte: without that byte it must be
+    // incomplete. If it still decodes, it ended earlier and something follows.
+    if (await inflateRaw(deflated.subarray(0, deflated.length - 1), false).then(() => true, () => false))
+      throw new Error('Malformed gzip stream — data after the end of the compressed stream');
+  }
+  const t = new DataView(bytes.buffer, bytes.byteOffset + end, 8);
+  if (t.getUint32(0, true) !== crc32(out) || t.getUint32(4, true) !== out.length % 2 ** 32)
+    throw new Error('Malformed gzip stream — checksum or size mismatch');
+  return out;
+}
+function gzipHeaderEnd(b) {
+  const bad = (why) => new Error(`Malformed gzip stream — ${why}`);
+  if (b.length < 10 || b[0] !== 0x1f || b[1] !== 0x8b || b[2] !== 8) throw bad('not a gzip header');
+  const flg = b[3];
+  if (flg & 0xe0) throw bad('reserved header flags set');
+  let i = 10;
+  if (flg & 0x04) {                           // FEXTRA
+    if (i + 2 > b.length) throw bad('truncated header');
+    i += 2 + (b[i] | b[i + 1] << 8);
+  }
+  for (const f of [0x08, 0x10]) {             // FNAME, FCOMMENT: zero-terminated
+    if (!(flg & f)) continue;
+    while (i < b.length && b[i] !== 0) i++;
+    i++;
+  }
+  if (flg & 0x02) {                           // FHCRC: low 16 bits of the header's CRC-32
+    if (i + 2 > b.length) throw bad('truncated header');
+    if ((crc32(b.subarray(0, i)) & 0xffff) !== (b[i] | b[i + 1] << 8)) throw bad('header checksum mismatch');
+    i += 2;
+  }
+  if (i > b.length) throw bad('truncated header');
+  return i;
+}
+async function inflateRaw(bytes, keep = true) {
+  const ds = new DecompressionStream('deflate-raw');
+  const w = ds.writable.getWriter();
+  w.write(bytes).catch(() => {}); w.close().catch(() => {});   // errors surface on the readable
+  return collectStream(ds.readable, MAX_DECOMPRESSED, keep);
+}
+// How this runtime treats bytes after the end of a deflate stream, probed once
+// with deflate-raw("a") = 4b 04 00. 'rejects': it refuses them, so a successful
+// decode ended exactly at the end of its input. 'truncation': it ignores them,
+// but refuses an incomplete stream, which gunzip uses instead. Neither: no
+// reliable way to tell where a stream ends, so nothing is opened.
+let _rawStreamEnd = null;
+function rawStreamEndCheck() {
+  return _rawStreamEnd ??= (async () => {
+    const ok = (b) => inflateRaw(new Uint8Array(b), false).then(() => true, () => false);
+    if (!(await ok([0x4b, 0x04, 0x00]))) throw new Error('DecompressionStream("deflate-raw") is not available');
+    if (!(await ok([0x4b, 0x04, 0x00, 0x00]))) return 'rejects';
+    if (!(await ok([0x4b, 0x04]))) return 'truncation';
+    throw new Error('This runtime cannot tell where a compressed stream ends — refusing to open');
+  })();
+}
+let _crcTable = null;
+function crc32(b) {
+  if (!_crcTable) {
+    _crcTable = new Int32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      _crcTable[n] = c;
+    }
+  }
+  let c = -1;
+  for (let i = 0; i < b.length; i++) c = _crcTable[(c ^ b[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ -1) >>> 0;
 }
 // Guard against gzip bombs: a few KB can decompress to many GB and OOM the tab.
 const MAX_DECOMPRESSED = 2 * 1024 * 1024 * 1024; // 2 GiB
-async function collectStream(readable, maxBytes = MAX_DECOMPRESSED) {
+async function collectStream(readable, maxBytes = MAX_DECOMPRESSED, keep = true) {
   const chunks = []; const r = readable.getReader(); let total = 0;
   for (;;) {
     const {done, value} = await r.read(); if (done) break;
     total += value.byteLength;
     if (total > maxBytes) { try { await r.cancel(); } catch {} throw new Error('Decompressed size exceeds safety limit'); }
-    chunks.push(value);
+    if (keep) chunks.push(value);
   }
+  if (!keep) return null;
   const out = new Uint8Array(total); let off = 0;
   for (const c of chunks) { out.set(c, off); off += c.byteLength; }
   return out;
@@ -327,10 +407,19 @@ async function pbkdf2WrapCek(cekRaw, passphrase, saltIn) {
 // The count comes from the file and header_hash is unkeyed, so without a ceiling an edited entry can stall the opener.
 const PBKDF2_MAX_ITERATIONS = 10000000;
 
-async function pbkdf2UnwrapCek(wrappedCek, passphrase) {
-  const iterations = wrappedCek.iterations || 600000;
-  if (!Number.isInteger(iterations) || iterations < 1 || iterations > PBKDF2_MAX_ITERATIONS)
+// Absent, null or 0 means the default; anything else must be a whole number in
+// range. Every implementation reads the count this way, so they agree on which
+// entries are tried and on what each costs (see kdfWork).
+function pbkdf2Iterations(wrappedCek) {
+  const it = wrappedCek?.iterations;
+  const n = it === undefined || it === null || it === 0 ? 600000 : it;
+  if (!Number.isInteger(n) || n < 1 || n > PBKDF2_MAX_ITERATIONS)
     throw new Error('PBKDF2 iteration count out of range — refusing');
+  return n;
+}
+
+async function pbkdf2UnwrapCek(wrappedCek, passphrase) {
+  const iterations = pbkdf2Iterations(wrappedCek);
   const base = await crypto.subtle.importKey(
     'raw', new TextEncoder().encode(passphrase), 'PBKDF2', false, ['deriveKey']
   );
@@ -657,6 +746,50 @@ async function argon2idUnwrapCek(wrappedCek, passphrase) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PASSPHRASE WORK BOUND (§6, §6.2, §6.5)
+// The limits above bound one entry. header_hash is unkeyed, so anyone who can
+// rewrite a file can add entries, each within those limits, and an opener would
+// derive a key for every one: 255 Argon2id entries at 1 GiB is about a day in a
+// browser. So one open is bounded too. Passphrase entries are tried cheapest
+// first, and the opener stops before its key-derivation work would pass that of
+// one maximum-parameter entry. Any single entry within the limits still opens,
+// and so does any file whose entries together fit.
+//
+// Work is counted in integers so every implementation sums it identically:
+// PBKDF2 = iterations × 2^24 and Argon2id = m × t × 10^7, against a limit of
+// 10^7 × 2^24. Both maxima (10,000,000 iterations; 1 GiB × 16 passes) equal the
+// limit, and no sum before the stop exceeds 2^53.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const KDF_METHODS     = new Set(['pbkdf2', 'argon2id']);
+const ARGON2_MAX_WORK = ARGON2_LIMITS.mMax * ARGON2_LIMITS.tMax;          // 2^24
+const MAX_KDF_WORK    = PBKDF2_MAX_ITERATIONS * ARGON2_MAX_WORK;
+
+// Work for one derivation against this entry; 0 when its parameters are refused
+// (the unwrap then fails without deriving anything).
+function kdfWork(entry) {
+  const w = entry?.wrapped_cek;
+  try {
+    if (entry?.method === 'pbkdf2') return pbkdf2Iterations(w) * ARGON2_MAX_WORK;
+    if (entry?.method === 'argon2id') {
+      const { m, t } = argon2Params(w);
+      return m * t * PBKDF2_MAX_ITERATIONS;
+    }
+  } catch { /* out of range */ }
+  return 0;
+}
+
+// The order an opener tries entries in: those that need no passphrase first,
+// in map order, then passphrase entries cheapest first (ties in map order).
+// Each item keeps its map index, which a quorum share falls back on.
+function accessOrder(accessMap) {
+  const items = accessMap.map((r, index) => ({
+    r, index, kdf: KDF_METHODS.has(r?.method), work: kdfWork(r),
+  }));
+  return items.sort((a, b) => (a.kdf - b.kdf) || (a.kdf ? a.work - b.work : 0) || (a.index - b.index));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // PADDING — Padmé (v1.4, §5.4)
 // Pads the compressed body so the ciphertext length reveals only O(log log L)
 // bits about it (Nikitin et al., "Reducing Metadata Leakage from Encrypted
@@ -684,6 +817,10 @@ function unpadBody(body) {
   if (body.length < 4) throw new Error('Malformed padded body');
   const n = new DataView(body.buffer, body.byteOffset, 4).getUint32(0, true);
   if (4 + n > body.length) throw new Error('Malformed padded body — length exceeds body');
+  // Exactly the Padmé length: any other length would let a writer pad to a size
+  // of its choosing, and give a crafted body room that a conforming one lacks.
+  if (body.length !== padmeLength(4 + n))
+    throw new Error('Malformed padded body — not the Padmé length');
   for (let i = 4 + n; i < body.length; i++)
     if (body[i] !== 0) throw new Error('Malformed padded body — non-zero padding');
   return body.subarray(4, 4 + n);
@@ -1149,9 +1286,15 @@ async function cellCreate(file, recipients, options = {}) {
 // ═══════════════════════════════════════════════════════════════════════════
 // CELL FORMAT — OPEN  (supports v1.0 and legacy v2.x)
 // tryDecryptFn: (entry) => Promise<Uint8Array|null>  (null = not my key)
+//   It is offered entries in accessOrder() and tries ONE passphrase per
+//   passphrase entry; the work bound counts one derivation per entry offered.
+// options.onAttempt({ entry, tried, total, kdf }): awaited before each entry,
+//   e.g. to show progress (a UI should yield there so the page can repaint).
+// options.signal: an AbortSignal; checked before each entry.
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function cellOpen(cell, tryDecryptFn) {
+async function cellOpen(cell, tryDecryptFn, options = {}) {
+  const { onAttempt, signal } = options;
   // Version gate — warn on unknown versions rather than silently misbehaving
   const fmtVersion = cell.version ?? cell.cd_version ?? 'unknown';
   const isLegacy   = !cell.version && cell.cd_version;
@@ -1240,31 +1383,45 @@ async function cellOpen(cell, tryDecryptFn) {
 
   let cekRaw = null, usedRecipient = null;
 
+  // Entries in accessOrder(), under the passphrase work bound (§6).
+  const order = accessOrder(accessMap);
+  let spent = 0, skipped = 0, tried = 0;
+  const attempt = async ({ r, kdf, work }) => {
+    if (signal?.aborted) throw new Error('Cancelled');
+    if (kdf && work > 0) {
+      if (spent + work > MAX_KDF_WORK) { skipped++; return null; }
+      spent += work;
+    }
+    tried++;
+    if (onAttempt) await onAttempt({ entry: r, tried, total: order.length, kdf });
+    try { return await tryDecryptFn(r); } catch { return null; }
+  };
+  const notTried = () => skipped
+    ? ` (${skipped} passphrase ${skipped === 1 ? 'entry was' : 'entries were'} not tried: ` +
+      'together they need more key-derivation work than one file may cost)'
+    : '';
+
   if (threshold > 1) {
     const shares = [];
-    for (const r of accessMap) {
-      try {
-        const share = await tryDecryptFn(r);
-        if (share) {
-          shares.push({ x: r.share_index ?? (accessMap.indexOf(r) + 1), data: share });
-          if (shares.length >= threshold) break;
-        }
-      } catch { /* try next */ }
+    for (const item of order) {
+      const share = await attempt(item);
+      if (share) {
+        shares.push({ x: item.r.share_index ?? (item.index + 1), data: share });
+        if (shares.length >= threshold) break;
+      }
     }
     if (shares.length < threshold)
-      throw new Error(`Quorum not met — need ${threshold}, unlocked ${shares.length}`);
+      throw new Error(`Quorum not met — need ${threshold}, unlocked ${shares.length}${notTried()}`);
     cekRaw = shamirCombine(shares);
     for (const s of shares) s.data.fill(0); // wipe individual share material
     usedRecipient = { label: `${shares.length}-of-${accessMap.length} quorum` };
   } else {
-    for (const r of accessMap) {
-      try {
-        const result = await tryDecryptFn(r);
-        if (result) { cekRaw = result; usedRecipient = r; break; }
-      } catch { /* try next */ }
+    for (const item of order) {
+      const result = await attempt(item);
+      if (result) { cekRaw = result; usedRecipient = item.r; break; }
     }
   }
-  if (!cekRaw) throw new Error('No matching key — check your key method and try again');
+  if (!cekRaw) throw new Error(`No matching key — check your key method and try again${notTried()}`);
 
   // v1.1+ binds metadata as AAD; tampering with threshold/lifetime/policy/prev_hash
   // (or stripping the AAD by downgrading the version) fails the GCM tag here.

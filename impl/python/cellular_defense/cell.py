@@ -537,41 +537,64 @@ def _cell_open(
         raise MalformedCellError("malformed cell — payload is missing iv or ciphertext")
     required = int((header.get("threshold") or {}).get("required") or 1)
 
-    unwrapper = unwrap or _default_unwrapper(keys, passphrases, prf_outputs)
+    passphrase_list = list(passphrases or [])
+    unwrapper = unwrap or _default_unwrapper(keys, passphrase_list, prf_outputs)
+    # Derivations per passphrase entry: the default unwrapper tries every
+    # passphrase it was given; a caller's own unwrapper is taken to try one.
+    per_entry = len(passphrase_list) if unwrap is None else 1
 
-    # ── Step 4: recover the CEK.
+    # ── Step 4: recover the CEK, in crypto.access_order() and under the
+    # passphrase work bound (§6).
+    spent = skipped = 0
+
+    def attempt(entry: dict, work: int | None) -> bytes | None:
+        nonlocal spent, skipped
+        cost = (work or 0) * per_entry
+        if cost:
+            if spent + cost > crypto.MAX_KDF_WORK:
+                skipped += 1
+                return None
+            spent += cost
+        try:
+            return unwrapper(entry)
+        except Exception:
+            return None  # a wrong key for this entry says nothing about the next
+
+    def not_tried() -> str:
+        if not skipped:
+            return ""
+        what = "entry was" if skipped == 1 else "entries were"
+        return (f" ({skipped} passphrase {what} not tried: together they need more "
+                "key-derivation work than one file may cost)")
+
+    order = crypto.access_order(access_map)
     cek: bytes
     used_recipient: dict | None
     if required > 1:
         shares: list[gf256.Share] = []
-        for index, entry in enumerate(access_map):
-            try:
-                material = unwrapper(entry)
-            except Exception:
-                continue  # a wrong key for this entry says nothing about the next
+        for index, entry, work in order:
+            material = attempt(entry, work)
             if material:
                 shares.append(gf256.Share(int(entry.get("share_index") or index + 1), material))
                 if len(shares) >= required:
                     break
         if len(shares) < required:
             raise QuorumNotMetError(
-                f"quorum not met — need {required}, unlocked {len(shares)}"
+                f"quorum not met — need {required}, unlocked {len(shares)}{not_tried()}"
             )
         cek = gf256.combine(shares)
         used_recipient = {"label": f"{len(shares)}-of-{len(access_map)} quorum"}
     else:
         cek = b""
         used_recipient = None
-        for entry in access_map:
-            try:
-                material = unwrapper(entry)
-            except Exception:
-                continue
+        for _, entry, work in order:
+            material = attempt(entry, work)
             if material:
                 cek, used_recipient = material, entry
                 break
         if not cek:
-            raise NoMatchingKeyError("no matching key — check your key method and try again")
+            raise NoMatchingKeyError(
+                f"no matching key — check your key method and try again{not_tried()}")
 
     aad = cell_aad(header, version) if not is_legacy else None
     decrypted = crypto.aes_gcm_decrypt(

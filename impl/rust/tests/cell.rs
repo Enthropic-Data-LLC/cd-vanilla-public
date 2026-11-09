@@ -489,3 +489,76 @@ fn v14_access_map_limit() {
     rehash(&mut cell);
     assert!(matches!(open(&cell, &keys_for(&[&alice])), Err(Error::Malformed(_))));
 }
+
+#[test]
+fn gzip_one_member_nothing_after() {
+    let gz = |s: &[u8]| crypto::gzip_compress(s).unwrap();
+    let (a, b, e) = (gz(b"first"), gz(b"SECOND"), gz(b""));
+    assert_eq!(crypto::gzip_decompress(&a).unwrap(), b"first");
+    let mut bad_crc = a.clone();
+    let at = bad_crc.len() - 5;
+    bad_crc[at] ^= 1;
+    let cat = |p: &[&[u8]]| p.concat();
+    for (name, body) in [
+        ("two members", cat(&[&a, &b])),
+        ("empty first member", cat(&[&e, &b])),
+        ("trailing bytes", cat(&[&a, b"JUNK"])),
+        ("one trailing zero", cat(&[&a, &[0]])),
+        ("bad crc", bad_crc),
+        ("short", a[..a.len() - 1].to_vec()),
+    ] {
+        assert!(matches!(crypto::gzip_decompress(&body), Err(Error::Malformed(_))), "{name}");
+    }
+}
+
+#[test]
+fn padding_is_exactly_padme() {
+    let body = crypto::pad_body(&[1, 2, 3]).unwrap();
+    let mut longer = body.clone();
+    longer.extend_from_slice(&[0; 512]);
+    for (name, bad) in [("longer", &longer[..]), ("unpadded", &body[..7]), ("one short", &body[..body.len() - 1])] {
+        match crypto::unpad_body(bad) {
+            Err(Error::Malformed(m)) if m.contains("Padmé length") => {}
+            other => panic!("{name}: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn parameters_read_as_javascript_reads_them() {
+    for (w, want) in [(json!({}), 600_000), (json!({"iterations": 0}), 600_000),
+                      (json!({"iterations": null}), 600_000), (json!({"iterations": 700000.0}), 700_000)] {
+        assert_eq!(crypto::pbkdf2_iterations(&w).unwrap(), want, "{w}");
+    }
+    for bad in [json!(-5), json!(true), json!("600000"), json!(1.5), json!(10_000_001), json!((1u64 << 32) + 600_000)] {
+        assert!(crypto::pbkdf2_iterations(&json!({ "iterations": bad })).is_err(), "{bad}");
+    }
+    assert_eq!(crypto::argon2_params(&json!({"m": 65536.0, "t": 3, "p": 4})).unwrap(), (65536, 3, 4));
+    assert!(crypto::argon2_params(&json!({"m": 65536.5, "t": 3, "p": 4})).is_err());
+}
+
+#[test]
+fn passphrase_work_bound() {
+    let max_argon = json!({"method": "argon2id", "wrapped_cek": {"m": 1048576, "t": 16, "p": 16}});
+    let max_pbkdf2 = json!({"method": "pbkdf2", "wrapped_cek": {"iterations": 10_000_000}});
+    assert_eq!(crypto::kdf_work(&max_argon), crypto::MAX_KDF_WORK);
+    assert_eq!(crypto::kdf_work(&max_pbkdf2), crypto::MAX_KDF_WORK);
+    assert_eq!(crypto::kdf_work(&json!({"method": "pbkdf2", "wrapped_cek": {"iterations": -5}})), 0);
+
+    let mut cell = seal(b"kdf", &[Recipient::passphrase("pw", "")], CreateOptions::default());
+    let real = cell["header"]["access_map"][0].clone();
+    // A copy of the real entry claiming 10,000,000 iterations: deriving it costs the
+    // whole budget and unwraps nothing. Tried first, the real entry would never be.
+    let mut decoy = real.clone();
+    decoy["wrapped_cek"]["iterations"] = json!(10_000_000);
+    cell["header"]["access_map"] = json!([decoy, real.clone()]);
+    rehash(&mut cell);
+    let pw = |n: usize| OpenOptions { passphrases: vec!["pw".into(); n], ..Default::default() };
+    assert_eq!(open(&cell, &pw(1)).unwrap().data, b"kdf");
+
+    // Each passphrase supplied is a derivation: 17 × 600,000 iterations passes the limit.
+    cell["header"]["access_map"] = json!([real]);
+    rehash(&mut cell);
+    assert!(matches!(open(&cell, &pw(17)), Err(Error::KdfWorkExceeded { not_tried: 1 })));
+    assert_eq!(open(&cell, &pw(16)).unwrap().data, b"kdf");
+}

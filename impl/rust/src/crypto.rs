@@ -14,7 +14,7 @@ use aes_gcm::{Aes256Gcm, KeyInit};
 use aes_kw::Kek;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use flate2::read::GzDecoder;
+use flate2::bufread::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use hkdf::Hkdf;
@@ -105,18 +105,31 @@ pub fn gzip_compress(data: &[u8]) -> Result<Vec<u8>> {
         .map_err(|e| Error::Malformed(format!("gzip: {e}")))
 }
 
-/// Decompress a gzip stream, refusing to exceed [`MAX_DECOMPRESSED`].
+/// Decompress exactly one gzip member, refusing to exceed [`MAX_DECOMPRESSED`].
+///
+/// Nothing may follow the member: not a second member, not trailing bytes.
+/// Implementations once disagreed on both (some joined members, some read only
+/// the first; some ignored trailing bytes, some refused), so one file opened as
+/// different documents in different programs.
 pub fn gzip_decompress(data: &[u8]) -> Result<Vec<u8>> {
     let mut out = Vec::new();
+    // The bufread decoder reads one member and consumes the slice only as far as
+    // its trailer, so whatever is left of the slice afterwards follows the member.
+    let mut decoder = GzDecoder::new(data);
     // One byte over the cap, so a stream exactly at the limit still reads and
     // anything larger is detected rather than silently truncated.
-    let mut reader = GzDecoder::new(data).take(MAX_DECOMPRESSED + 1);
-    reader
+    (&mut decoder)
+        .take(MAX_DECOMPRESSED + 1)
         .read_to_end(&mut out)
         .map_err(|e| Error::Malformed(format!("payload is not a valid gzip stream: {e}")))?;
     if out.len() as u64 > MAX_DECOMPRESSED {
         return Err(Error::Malformed(
             "decompressed size exceeds safety limit".into(),
+        ));
+    }
+    if !decoder.get_ref().is_empty() {
+        return Err(Error::Malformed(
+            "data after the end of the gzip member — refusing".into(),
         ));
     }
     Ok(out)
@@ -289,6 +302,33 @@ pub fn pbkdf2_wrap_cek(
     Ok((encode_b64(&salt), PBKDF2_ITERATIONS, encode_b64(&wrapped)))
 }
 
+/// A JSON number with an integral value, as JavaScript's `Number.isInteger`
+/// sees it: `65536.0` is 65536; `1.5`, `true` and `"5"` are not integers. Every
+/// implementation reads entry parameters this way, so they agree on which
+/// entries are tried and on what each one costs.
+pub fn json_int(value: &serde_json::Value) -> Option<i64> {
+    if let Some(n) = value.as_i64() {
+        return Some(n);
+    }
+    let f = value.as_f64()?;
+    (f.is_finite() && f.fract() == 0.0 && f.abs() <= (1u64 << 53) as f64).then_some(f as i64)
+}
+
+/// An entry's iteration count: absent, null or 0 means the default; anything
+/// else must be a whole number in 1…10,000,000.
+pub fn pbkdf2_iterations(wrapped: &serde_json::Value) -> Result<u32> {
+    let refuse = || Error::Malformed("PBKDF2 iteration count out of range — refusing".into());
+    match wrapped.get("iterations") {
+        None | Some(serde_json::Value::Null) => Ok(PBKDF2_ITERATIONS),
+        Some(v) => match json_int(v).ok_or_else(refuse)? {
+            0 => Ok(PBKDF2_ITERATIONS),
+            n if (1..=PBKDF2_MAX_ITERATIONS as i64).contains(&n) => Ok(n as u32),
+            _ => Err(refuse()),
+        },
+    }
+}
+
+/// Unwrap a PBKDF2 entry. `iterations` comes from [`pbkdf2_iterations`].
 pub fn pbkdf2_unwrap_cek(
     salt_b64: &str,
     iterations: u32,
@@ -337,6 +377,53 @@ pub fn argon2_check(m: u64, t: u64, p: u64) -> Result<(u32, u32, u32)> {
     Ok((m as u32, t as u32, p as u32))
 }
 
+/// Read and check an entry's `m`, `t` and `p` (§6.5).
+pub fn argon2_params(wrapped: &serde_json::Value) -> Result<(u32, u32, u32)> {
+    let num = |k: &str| {
+        wrapped
+            .get(k)
+            .and_then(json_int)
+            .and_then(|n| u64::try_from(n).ok())
+    };
+    match (num("m"), num("t"), num("p")) {
+        (Some(m), Some(t), Some(p)) => argon2_check(m, t, p),
+        _ => Err(Error::Malformed(
+            "Argon2id parameters out of range — refusing (§6.5)".into(),
+        )),
+    }
+}
+
+// ─── Passphrase work bound — spec §6, §6.2, §6.5 ────────────────────────────
+//
+// The limits above bound one entry. header_hash is unkeyed, so anyone who can
+// rewrite a file can add entries, each within those limits, and an opener would
+// derive a key for every one. So one open is bounded too: passphrase entries are
+// tried cheapest first, and the opener stops before its key-derivation work
+// would pass that of one maximum-parameter entry. Any single entry within the
+// limits still opens. Work is counted in integers, as in the reference:
+// PBKDF2 = iterations × 2^24, Argon2id = m × t × 10^7, limit = 10^7 × 2^24.
+
+const ARGON2_MAX_WORK: u64 = ARGON2_M_MAX as u64 * 16; // 2^24
+
+/// The passphrase work one open may spend (see [`kdf_work`]).
+pub const MAX_KDF_WORK: u64 = PBKDF2_MAX_ITERATIONS as u64 * ARGON2_MAX_WORK;
+
+/// Work for one derivation against `entry`; 0 when its parameters are refused
+/// (the unwrap then fails without deriving anything).
+pub fn kdf_work(entry: &serde_json::Value) -> u64 {
+    let null = serde_json::Value::Null;
+    let wrapped = entry.get("wrapped_cek").unwrap_or(&null);
+    match entry.get("method").and_then(|v| v.as_str()) {
+        Some("pbkdf2") => pbkdf2_iterations(wrapped)
+            .map(|n| n as u64 * ARGON2_MAX_WORK)
+            .unwrap_or(0),
+        Some("argon2id") => argon2_params(wrapped)
+            .map(|(m, t, _)| m as u64 * t as u64 * PBKDF2_MAX_ITERATIONS as u64)
+            .unwrap_or(0),
+        _ => 0,
+    }
+}
+
 /// Argon2id v0x13, 32-byte tag, over the UTF-8 of the passphrase's NFC form.
 ///
 /// Unlike PBKDF2 entries (§6.2), v1.4 normalizes: a passphrase typed with a
@@ -374,15 +461,7 @@ pub fn argon2id_wrap_cek(
 
 /// Unwrap an Argon2id entry's `wrapped_cek` object.
 pub fn argon2id_unwrap_cek(wrapped: &serde_json::Value, passphrase: &str) -> Result<Vec<u8>> {
-    let num = |k: &str| wrapped.get(k).and_then(|v| v.as_u64());
-    let (m, t, p) = match (num("m"), num("t"), num("p")) {
-        (Some(m), Some(t), Some(p)) => argon2_check(m, t, p)?,
-        _ => {
-            return Err(Error::Malformed(
-                "Argon2id parameters out of range — refusing (§6.5)".into(),
-            ))
-        }
-    };
+    let (m, t, p) = argon2_params(wrapped)?;
     let text = |k: &str| wrapped.get(k).and_then(|v| v.as_str());
     let salt = decode_b64(text("salt").unwrap_or(""), "salt")?;
     if salt.len() < 16 {
@@ -431,6 +510,11 @@ pub fn unpad_body(body: &[u8]) -> Result<&[u8]> {
     let n = u32::from_le_bytes([body[0], body[1], body[2], body[3]]) as usize;
     if 4 + n > body.len() {
         return Err(Error::Malformed("malformed padded body — length exceeds body".into()));
+    }
+    // Exactly the Padmé length: any other would let a writer pad to a size of its
+    // choosing, and give a crafted body room that a conforming one lacks.
+    if body.len() != padme_length(4 + n) {
+        return Err(Error::Malformed("malformed padded body — not the Padmé length".into()));
     }
     if body[4 + n..].iter().any(|&b| b != 0) {
         return Err(Error::Malformed("malformed padded body — non-zero padding".into()));

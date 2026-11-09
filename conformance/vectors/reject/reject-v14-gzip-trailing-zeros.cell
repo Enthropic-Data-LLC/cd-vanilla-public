@@ -1,0 +1,49 @@
+{
+  "version": "1.4",
+  "doc_id": "01CONFORMANCEGZIP0000000000",
+  "created_at": 1787500000,
+  "header": {
+    "prev_hash": null,
+    "threshold": {
+      "required": 1,
+      "of_total": 1
+    },
+    "lifetime": {
+      "type": "permanent",
+      "advisory": {
+        "retain_until": null,
+        "release_at": null,
+        "single_use": false,
+        "minimum_atl": 1
+      },
+      "disposal": {
+        "at": null,
+        "action": "none"
+      }
+    },
+    "policy": {
+      "copy_protection": "standard",
+      "watermark_mode": "none",
+      "created_on_origin": null,
+      "origin_sig": null
+    },
+    "access_map": [
+      {
+        "method": "ecdh-p256",
+        "wrapped_cek": {
+          "eph_spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHjHagjqOBFhJqAM9pI/TlQxCp4sN3uPApfDonqq5Nl0hYm6ajkaqXZ7dmavGwxSPaPGPFn18Z29zEUhWZAWgtw==",
+          "hkdf_salt": "Ql00By0fJ22lJTwmz/g7Z8TtddkzCcw7IaH1aCBplQE=",
+          "ct": "pHFmcLe+lP28F2/KUiJHC8QukZGrcWkH6KELjSQIqbhhRwShWW8abQ=="
+        }
+      }
+    ],
+    "payload_hash": "auM+j3Mep1/yIj6Cq9mLtp5o5rQWnBeBignwSL+KIlQ="
+  },
+  "header_hash": "xm6FhBhV204fxkkkUeSB3fsGgj2hja2eBMGXU3Y59yQ=",
+  "payload": {
+    "alg": "AES-256-GCM",
+    "encoding": "base64+gzip+padme",
+    "iv": "FeDNNOcO8h6mCTRR",
+    "ciphertext": "nKf7nA+MmmJRIfmI5DAIrrWZwCXPjPUI99wMbQzAiG00wyZimrbepWi12HiAuyUSS9YrRzAYQ5gyy0bC4drxfXp4VyVdMAxbJyaWCFttCvKTFNCTEKeWD4jphwJpZu0vhnmxxkb2uhv7qlfVxnDgTUElx9sOB3SjdjjkJ2N7LDjPhtTx6LnJrCci84ffD1u0PcQzM581xpYUjJVXSdExLnvyaHa5Hj+i4S1WS+TMZlzG+8qouUEIA/BeKnUtb3Td2Ha4/RNuhU2YjGPrTsKHzSvb8DEHJUKKr2Lv0eoWN6wT8d1ztP0I7n1EfmM+N37T3BaoQ3RO8QELICukrXt5oJ/0bsOPYptZN2g+CUjUcDRSmtAaQBxO8mEtakrnw1gSd/zQOXOAa0/o4thOsEbqV0wOKLkwyv0YenphECNALS+l5tBEUCkBnoh3w7scwzxLLNP2ueo5dzgokJC7mONoOpU0nCsBzSM0z0EsctTTDraPZtbS5ybKVvcZIbXHvnnBgWZQhJVVZpZOvq2v8Zs80m/kH7RY5n8nZyXrUrwVAMTUv+DkPTplR5AKYDU2vEYptx+EKmtNMDjPk8zFCUtqIwRhljvWgrCCfG2A8pWLQraqohd5R1hSkOASMv8eIRYJjxR+PPRqwLJGCOclUYumLNSqDwru4nD3aQbR6zAfiEXVqVJ74fG4uqrmesV4EurD"
+  }
+}

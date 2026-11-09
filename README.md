@@ -92,12 +92,14 @@ Three things run there, and the middle one is the reason the directory exists:
   implementations hash are compared across 200 randomly generated JSON
   structures. An implementation can be entirely self-consistent and interoperate
   with nothing; only cells that cross the boundary prove otherwise;
-- the shared vectors in `conformance/` — 41 cells covering every format version
+- the shared vectors in `conformance/` — 52 cells covering every format version
   including the superseded ones, the file-carryable access methods (ECDH,
   PBKDF2, Argon2id), and the refusals: tampered AAD, recomputed `header_hash`
   over an edited header, version downgrade and v1.4 relabelling, DER-encoded
   signature, a header signature on a v1.4 cell, bad padding, an over-large
-  access map, a weak Argon2id entry, short quorum, expired retention; plus 225
+  access map, a weak Argon2id entry, a body holding more than one gzip member
+  or bytes after it, passphrase entries that together cost more key-derivation
+  work than one file may, short quorum, expired retention; plus 225
   canonical-serialization vectors taken from `cell-crypto.js` itself.
 
 All five implementations agree on all of them, and cells cross between them in
@@ -110,7 +112,7 @@ Tests run in-browser. WebCrypto requires `localhost` or HTTPS — plain IP addre
 Or headless, which is what CI and the figure tooling use:
 
 ```bash
-npm test          # 65/65, 2 hardware-skipped, plus the 41 conformance vectors
+npm test          # 72/72, 2 hardware-skipped, plus the 52 conformance vectors
 ```
 
 ## Format specification

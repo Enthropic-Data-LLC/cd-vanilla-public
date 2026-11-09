@@ -271,6 +271,26 @@ public final class Json {
         return value instanceof String ? (String) value : null;
     }
 
+    /**
+     * A JSON number with an integral value, as JavaScript's
+     * {@code Number.isInteger} sees it: 65536.0 is 65536; 1.5, true and "5" are
+     * not integers (null). Every implementation reads entry parameters this way,
+     * so they agree on which entries are tried and on what each one costs.
+     */
+    public static Long integral(Object value) {
+        if (value instanceof Double d) {
+            return Double.isFinite(d) && d == Math.rint(d) && Math.abs(d) <= 9007199254740992.0
+                    ? (long) (double) d : null;
+        }
+        if (value instanceof Long l) {
+            return l;
+        }
+        if (value instanceof Integer i) {
+            return (long) i;
+        }
+        return null;
+    }
+
     public static long integer(Map<String, Object> parent, String key, long fallback) {
         Object value = parent == null ? null : parent.get(key);
         return value instanceof Double d ? (long) (double) d : fallback;

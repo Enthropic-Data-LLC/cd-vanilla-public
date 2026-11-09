@@ -81,7 +81,11 @@ public class CellException extends RuntimeException {
     /** Fewer than {@code threshold.required} shares were recovered (§7). */
     public static class QuorumNotMet extends NoMatchingKey {
         public QuorumNotMet(int needed, int unlocked) {
-            super("quorum not met — need " + needed + ", unlocked " + unlocked);
+            this(needed, unlocked, "");
+        }
+
+        QuorumNotMet(int needed, int unlocked, String suffix) {
+            super("quorum not met — need " + needed + ", unlocked " + unlocked + suffix);
         }
     }
 

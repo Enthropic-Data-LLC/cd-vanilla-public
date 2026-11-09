@@ -800,35 +800,70 @@ async function openWithKeychain() {
   } catch (e) { showAlert('open-status', '❌ ' + e.message, 'error'); }
 }
 
+let _passOpen = null;  // AbortController of the passphrase open in progress
+
 function openWithPassphrase() {
   showModal(`
     <h3>Enter passphrase</h3>
     <div class="field"><input type="password" id="odec-pass" placeholder="Passphrase" style="width:100%" autofocus></div>
+    <p id="odec-progress" class="hint" style="display:none" aria-live="polite"></p>
     <div id="odec-err" class="alert alert-error" style="display:none"></div>
     <div class="btn-group" style="margin-top:0.75rem">
-      <button class="btn btn-primary" onclick="openConfirmPass()">Decrypt</button>
-      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="odec-go" onclick="openConfirmPass()">Decrypt</button>
+      <button class="btn btn-secondary" onclick="cancelPassOpen()">Cancel</button>
     </div>`);
   setTimeout(() => document.getElementById('odec-pass')?.focus(), 80);
   document.getElementById('odec-pass').onkeydown = e => { if (e.key==='Enter') openConfirmPass(); };
 }
 
+// Stops before the next entry. A derivation already running finishes first:
+// key derivation runs on the page and cannot be interrupted part-way.
+function cancelPassOpen() {
+  _passOpen?.abort();
+  closeModal();
+}
+
 async function openConfirmPass() {
   const pass = document.getElementById('odec-pass').value;
   const err  = document.getElementById('odec-err');
+  const prog = document.getElementById('odec-progress');
+  const go   = document.getElementById('odec-go');
   if (!pass) { err.textContent='Enter a passphrase'; err.style.display='block'; return; }
+  if (_passOpen) return;
+  const ac = _passOpen = new AbortController();
+  const map = _openCell.header?.access_map ?? _openCell.recipients ?? [];
+  const total = map.filter(r => r?.method === 'pbkdf2' || r?.method === 'argon2id').length;
+  let n = 0;
+  go.disabled = true; err.style.display = 'none';
   try {
     const result = await cellOpen(_openCell, async (r) => {
       if (r.method === 'argon2id') return argon2idUnwrapCek(r.wrapped_cek, pass);
       if (r.method !== 'pbkdf2') return null;
       return pbkdf2UnwrapCek(r.wrapped_cek, pass);
+    }, {
+      signal: ac.signal,
+      onAttempt: async ({ kdf }) => {
+        if (!kdf) return;
+        prog.textContent = `Trying the passphrase on entry ${++n} of ${total}… this can take a while.`;
+        prog.style.display = 'block';
+        await new Promise(r => setTimeout(r, 30));   // repaint before the derivation holds the page
+      },
     });
+    if (ac.signal.aborted) return;
     closeModal();
     const sigNote = await sigNoteFor(result);
     showAlert('open-status', `✅ Decrypted successfully${sigNote}`, 'success');
     dlBytes(result.bytes, result.filename, result.contentType);
     _showReencrypt(result);
-  } catch { err.textContent='Wrong passphrase or corrupted cell'; err.style.display='block'; }
+  } catch (e) {
+    if (ac.signal.aborted) return;
+    prog.style.display = 'none';
+    err.textContent = /not tried/.test(e.message) ? e.message : 'Wrong passphrase or corrupted cell';
+    err.style.display = 'block';
+  } finally {
+    _passOpen = null;
+    go.disabled = false;
+  }
 }
 
 async function openWithYubikey() {
