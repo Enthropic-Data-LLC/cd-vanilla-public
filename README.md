@@ -1,6 +1,6 @@
 # Cell Format — cd-vanilla
 
-Browser-native zero-knowledge encrypted document format. Single HTML file, no dependencies, no server round-trips for crypto.
+Browser-native zero-knowledge encrypted document format. No dependencies, no build step, no server round-trips for crypto.
 
 **Live demo:** <https://vnlla.cellulardefense.net> — the code in this repo, running in your browser. Nothing is uploaded.
 
@@ -41,7 +41,9 @@ Or open `index.html` directly in Chrome/Edge (file:// works for WebCrypto in mos
 ## File layout
 
 ```
-index.html          — the application shell (HTML + CSS + UI JS, no build step)
+index.html          — the application shell (HTML only; no inline script or handlers)
+app.js              — the UI code, loaded by index.html (kept out of the page so it runs under script-src 'self')
+app.css             — the stylesheet
 cell-crypto.js      — the crypto/format library, loaded by index.html
 docs/SPEC.md        — format specification v1.4 (normative)
 docs/defensive-pub/anchors/      — the anchored v1.2, v1.3 and v1.4 bytes + Bitcoin timestamp proofs

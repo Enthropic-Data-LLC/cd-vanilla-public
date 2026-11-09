@@ -3,7 +3,7 @@
 // before any key is used and before header_hash is checked, so anyone who can
 // hand someone a .cell controls these strings.
 //
-// Loads the real cell-crypto.js and the real inline app script from index.html,
+// Loads the real cell-crypto.js and the real app script (app.js),
 // renders into a stub element, and inspects the HTML string.
 import { readFileSync } from 'node:fs';
 
@@ -27,9 +27,9 @@ globalThis.localStorage = {
 };
 globalThis.indexedDB = {};
 
+// The app script is a separate file (app.js) so the page can run under script-src 'self'.
 const html = readFileSync(`${ROOT}/index.html`, 'utf8');
-const appJs = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1])
-  .sort((a, b) => b.length - a.length)[0];
+const appJs = readFileSync(`${ROOT}/app.js`, 'utf8');
 const cryptoJs = readFileSync(`${ROOT}/cell-crypto.js`, 'utf8');
 const app = new Function(cryptoJs + '\n;' + appJs + `
 ;kcAll = async () => [];
