@@ -206,9 +206,9 @@ were fixed the same day, and ten conformance vectors (`*-gzip-*`,
 `reject-v14-kdf-work-bound`) pin the behaviour.
 
 Superseded root proofs, not to be cited: `1c1b8371…` (the 2026-10-31 bytes; its
-pending proof is in git history at commit `8619a65`), `191ed2b0…` (the
-2026-11-05 bytes; at commit `aa67581`) and `efa0a4f8…` (the first 2026-11-08
-bytes; at commit `2f5850e`).
+pending proof is in git history at commit `3453f29`), `191ed2b0…` (the
+2026-11-05 bytes; at commit `412e886`) and `efa0a4f8…` (the first 2026-11-08
+bytes; at commit `69e1880`).
 
 When the v1.4 files were merged here on 2026-10-31, the root proofs for
 `docs/SPEC.md` and `cell-crypto.js` still described v1.3-era bytes; the v1.4
