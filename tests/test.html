@@ -458,6 +458,18 @@ test('Signature', 'signed cell → sigVerified equals signer fingerprint', async
   eq(result.sigVerified, signer.fingerprint);
 });
 
+test('Signature', 'v1.3: signer comes from the key, not the header_sig_by label', async () => {
+  const rec       = await ecdhPair();
+  const signer    = await ecdhPair('Mallory');
+  const claimed   = await ecdhPair('Bob');
+  const senderRec = { pkcs8: signer.pkcs8, spki: signer.spki, fingerprint: signer.fingerprint };
+  const cell      = await w.cellCreate(mkFile('who sent this', 's.txt', 'text/plain'), [rec], { senderRec, version: '1.3' });
+  cell.header_sig_by = claimed.fingerprint;   // covered by nothing, so this still opens
+  const result = await openWith(cell, rec);
+  eq(result.sigVerified, signer.fingerprint, 'must report the key that verified');
+  notEq(result.sigVerified, claimed.fingerprint);
+});
+
 test('Signature', 'corrupted header_sig byte → rejected', async () => {
   const rec       = await ecdhPair();
   const signer    = await ecdhPair('Signer');
@@ -683,6 +695,42 @@ test('Legacy', 'v2.0 cell (cd_version, no hkdf_salt, plaintext metadata) opens c
 // ─── YubiKey — hardware required ──────────────────────────────────────────────
 
 skip('YubiKey', 'PRF wrap / unwrap', 'requires physical hardware — test manually in browser');
+
+// A software stand-in for the authenticator: PRF output = HMAC-SHA256(secret, salt),
+// which is what hmac-secret computes. Enough to test what the library does with it.
+async function withFakeSecurityKey(fn) {
+  const nav = w.navigator || globalThis.navigator;
+  const secret = w.crypto.getRandomValues(new Uint8Array(32));
+  const mac = await w.crypto.subtle.importKey('raw', secret, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const fake = {
+    get: async ({ publicKey }) => {
+      const out = await w.crypto.subtle.sign('HMAC', mac, publicKey.extensions.prf.eval.first);
+      return { getClientExtensionResults: () => ({ prf: { results: { first: out } } }) };
+    },
+  };
+  const had = Object.getOwnPropertyDescriptor(nav, 'credentials');
+  Object.defineProperty(nav, 'credentials', { value: fake, configurable: true });
+  try { return await fn(); }
+  finally { if (had) Object.defineProperty(nav, 'credentials', had); else delete nav.credentials; }
+}
+
+test('YubiKey', 'each entry gets a fresh PRF salt, never the registration salt (stub authenticator)', async () => {
+  await withFakeSecurityKey(async () => {
+    const reg = { method: 'yubikey-prf', label: 'YK', fingerprint: 'yk',
+                  credential_id: w.toB64(new Uint8Array(16).fill(7)),
+                  prf_salt: w.toB64(new Uint8Array(32).fill(9)) };
+    const c1 = await w.cellCreate(mkFile('yk one', 'a.txt', 'text/plain'), [reg]);
+    const c2 = await w.cellCreate(mkFile('yk two', 'b.txt', 'text/plain'), [reg]);
+    const s1 = c1.header.access_map[0].wrapped_cek.prf_salt;
+    const s2 = c2.header.access_map[0].wrapped_cek.prf_salt;
+    notEq(s1, reg.prf_salt, 'reused the registration salt: one wrapping key for every cell');
+    notEq(s1, s2, 'two cells share a salt, so they share a wrapping key');
+    eq(w.fromB64(s1).length, 32);
+    const open = (c) => w.cellOpen(c, async (r) => r.method === 'yubikey-prf' ? w.prfUnwrapCek(r.wrapped_cek) : null);
+    eq(new TextDecoder().decode((await open(c1)).bytes), 'yk one');
+    eq(new TextDecoder().decode((await open(c2)).bytes), 'yk two');
+  });
+});
 skip('YubiKey', 'PRF registration smoke test', 'requires physical hardware — test manually in browser');
 
 

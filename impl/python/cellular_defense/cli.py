@@ -20,6 +20,8 @@ import getpass
 import gzip
 import json
 import mimetypes
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -48,6 +50,46 @@ def _write_cell(cell: dict, path: Path) -> None:
 
 def _load_keys(paths: list[str]) -> list[KeyRecord]:
     return [KeyRecord.from_cdkey(json.loads(Path(p).read_text())) for p in paths]
+
+
+# ── Sender-chosen text ───────────────────────────────────────────────────────
+# The filename, media type and meta come from whoever sealed the cell, and
+# inspect's header fields from anyone who handled it. None of it may reach the
+# filesystem or the terminal as is: a newline or ESC can print a fake
+# "signed by key" line, bidi controls can reverse what a name appears to say.
+
+
+def _unsafe(ch: str) -> bool:
+    """C0/C1 controls, bidi and zero-width format characters, line and paragraph
+    separators, lone surrogates. The same set in every port's CLI."""
+    o = ord(ch)
+    return (o < 0x20 or 0x7F <= o <= 0x9F or o == 0x061C or 0x200B <= o <= 0x200F
+            or 0x2028 <= o <= 0x202E or 0x2060 <= o <= 0x2069 or o == 0xFEFF
+            or 0xD800 <= o <= 0xDFFF)
+
+
+def shown(value: object) -> str:
+    """Text safe to print: every unsafe character as a visible \\uXXXX escape."""
+    text = value if isinstance(value, str) else str(value)
+    return "".join(f"\\u{ord(c):04x}" if _unsafe(c) else c for c in text)
+
+
+def safe_filename(name: object) -> str:
+    """The sender's filename as a plain name in the output directory: no path,
+    no unsafe characters, no leading dot (no .bashrc, .envrc), at most 200 bytes."""
+    base = re.split(r"[\\/]", name)[-1] if isinstance(name, str) else ""
+    base = "".join(c for c in base if not _unsafe(c))
+    base = re.sub(r"^[\s.]+", "", base)
+    base = base.encode("utf-8")[:200].decode("utf-8", "ignore").rstrip()
+    return base or "decrypted"
+
+
+def _write_new(path: Path, data: bytes) -> None:
+    """Create the file; never overwrite or follow a symlink. Owner-only: it is
+    the plaintext of an encrypted file."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(data)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,30 +173,31 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     """Print exactly what an observer of the stored cell can see (§2.2)."""
     cell = _read_cell(Path(args.cell))
     header = cell.get("header") or {}
-    print(f"version      {cell.get('version') or cell.get('cd_version')}")
-    print(f"doc_id       {cell.get('doc_id')}")
-    print(f"created_at   {cell.get('created_at')}")
+    # Every value here can be edited by anyone who handled the file.
+    print(f"version      {shown(cell.get('version') or cell.get('cd_version'))}")
+    print(f"doc_id       {shown(cell.get('doc_id'))}")
+    print(f"created_at   {shown(cell.get('created_at'))}")
     threshold = header.get("threshold") or {}
-    print(f"threshold    {threshold.get('required')}-of-{threshold.get('of_total')}")
+    print(f"threshold    {shown(threshold.get('required'))}-of-{shown(threshold.get('of_total'))}")
     lt = lifetime_mod.read(header.get("lifetime"))
     if lt:
-        print(f"lifetime     type={lt.type}")
-        print(f"  advisory   retain_until={lt.retain_until} release_at={lt.release_at} "
-              f"single_use={lt.single_use} minimum_atl={lt.minimum_atl}")
+        print(f"lifetime     type={shown(lt.type)}")
+        print(f"  advisory   retain_until={shown(lt.retain_until)} release_at={shown(lt.release_at)} "
+              f"single_use={shown(lt.single_use)} minimum_atl={shown(lt.minimum_atl)}")
         print(f"             (advisory: honoured by conforming software, NOT enforced "
               f"against a keyholder)")
-        print(f"  disposal   at={lt.disposal_at} action={lt.disposal_action}")
+        print(f"  disposal   at={shown(lt.disposal_at)} action={shown(lt.disposal_action)}")
         print(f"             (enforced by whoever stores the ciphertext)")
-    print(f"prev_hash    {header.get('prev_hash')}")
+    print(f"prev_hash    {shown(header.get('prev_hash'))}")
     print("access_map:")
     for entry in header.get("access_map") or cell.get("recipients") or []:
         index = entry.get("share_index")
-        print(f"  - {entry.get('method'):<12} {entry.get('fingerprint')}  "
-              f"{entry.get('label')!r}" + (f"  share {index}" if index else ""))
+        print(f"  - {shown(entry.get('method')):<12} {shown(entry.get('fingerprint'))}  "
+              f"{shown(repr(entry.get('label')))}" + (f"  share {shown(index)}" if index else ""))
     payload = cell.get("payload") or cell.get("encrypted_body") or {}
     if payload.get("ciphertext"):
         size = len(b64decode(payload["ciphertext"], field="ciphertext"))
-        print(f"ciphertext   {size} bytes ({payload.get('alg')})")
+        print(f"ciphertext   {size} bytes ({shown(payload.get('alg'))})")
     print("\nnot visible here: the plaintext, the filename, the media type, the original "
           "size, and any sender-defined meta — all of them live inside the ciphertext (§5).")
     return 0
@@ -178,15 +221,23 @@ def cmd_open(args: argparse.Namespace) -> int:
     # so the caller cannot always name the output file in advance.
     if destination.is_dir() or (args.out or "").endswith("/"):
         destination.mkdir(parents=True, exist_ok=True)
-        destination = destination / Path(result.filename).name
-    destination.write_bytes(result.data)
-    print(f"wrote {destination}  ({len(result.data)} bytes, {result.content_type})")
+        destination = destination / safe_filename(result.filename)
+    try:
+        _write_new(destination, result.data)
+    except FileExistsError:
+        print(f"error: {shown(destination)} already exists — not overwriting it; "
+              f"name a new file with --out", file=sys.stderr)
+        return 1
+    # Who signed comes first, before any text the sender chose.
     if result.signed:
         print(f"signed by key {result.signer_fingerprint}")
         if result.signed_to is not None:
-            print(f"signed for     {', '.join(result.signed_to) or '(no key recipients)'}")
+            print(f"signed for     {shown(', '.join(result.signed_to)) or '(no key recipients)'}")
+    else:
+        print("not signed     nothing in this cell says who sent it")
+    print(f"wrote {shown(destination)}  ({len(result.data)} bytes, {shown(result.content_type)})")
     if result.meta:
-        print(f"sender meta: {json.dumps(result.meta, ensure_ascii=False)}")
+        print(f"sender meta: {shown(json.dumps(result.meta, ensure_ascii=False))}")
     return 0
 
 
@@ -240,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except CellError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {shown(exc)}", file=sys.stderr)
         return 1
 
 

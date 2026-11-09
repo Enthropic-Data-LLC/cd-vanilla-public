@@ -1169,7 +1169,12 @@ async function _wrapEntry(r, keyMat, shareIdx, version = CELL_FORMAT_VERSION) {
   } else if (r.method === 'yubikey-prf') {
     // credential_id stays (WebAuthn needs it to ask the right authenticator),
     // so cells for the same security key remain linkable — see §6.3.
-    return { ...base, wrapped_cek: await prfWrapCek(keyMat, r.credential_id, r.prf_salt) };
+    // The salt is fresh for every entry, never the one saved at registration:
+    // the PRF output for a salt IS the wrapping key, so a reused salt made one
+    // static key that opened every cell for this security key. The salt
+    // travels in the entry, so opening is unchanged.
+    const prfSalt = toB64(crypto.getRandomValues(new Uint8Array(32)));
+    return { ...base, wrapped_cek: await prfWrapCek(keyMat, r.credential_id, prfSalt) };
   }
   return null;
 }
@@ -1377,7 +1382,10 @@ async function cellOpen(cell, tryDecryptFn, options = {}) {
         { name: 'ECDSA', hash: 'SHA-256' }, ecdsaPub, fromB64(cell.header_sig), headerBytes
       );
       if (!valid) throw new Error('Header signature invalid — cell may be forged');
-      sigVerified = cell.header_sig_by || '(unknown)';
+      // The signer is the key that verified, never header_sig_by: that label
+      // is covered by neither header_hash nor the signature, so any sender
+      // could write someone else's fingerprint there (§4.1).
+      sigVerified = await fp(cell.header_sig_key);
     }
   }
 

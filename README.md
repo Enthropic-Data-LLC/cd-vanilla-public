@@ -94,7 +94,7 @@ Three things run there, and the middle one is the reason the directory exists:
   implementations hash are compared across 200 randomly generated JSON
   structures. An implementation can be entirely self-consistent and interoperate
   with nothing; only cells that cross the boundary prove otherwise;
-- the shared vectors in `conformance/` — 52 cells covering every format version
+- the shared vectors in `conformance/` — 57 cells covering every format version
   including the superseded ones, the file-carryable access methods (ECDH,
   PBKDF2, Argon2id), and the refusals: tampered AAD, recomputed `header_hash`
   over an edited header, version downgrade and v1.4 relabelling, DER-encoded
@@ -114,7 +114,7 @@ Tests run in-browser. WebCrypto requires `localhost` or HTTPS — plain IP addre
 Or headless, which is what CI and the figure tooling use:
 
 ```bash
-npm test          # 72/72, 2 hardware-skipped, plus the 52 conformance vectors
+npm test          # 74/74, 2 hardware-skipped, plus the 57 conformance vectors
 ```
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all five

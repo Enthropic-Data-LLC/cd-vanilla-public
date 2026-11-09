@@ -1128,7 +1128,7 @@ function renderAbout(app) {
       <table class="meta-table" style="margin-bottom:1.5rem">
         <tr><td>🔑 ECDH P-256</td><td>Generate a keypair in the browser. Private key stays in IndexedDB. Share your public key (.cdpub) with others.</td></tr>
         <tr><td>💬 Argon2id</td><td>Derive a key from a passphrase (RFC 9106; 64 MiB, 3 passes, 4 lanes). Share the passphrase out-of-band. Older PBKDF2 cells still open.</td></tr>
-        <tr><td>🔐 YubiKey PRF</td><td>FIDO2 PRF extension — deterministic 32-byte key output. Requires HTTPS + YubiKey 5 series.</td></tr>
+        <tr><td>🔐 YubiKey PRF</td><td>FIDO2 PRF extension — the key evaluates a fresh random 32-byte salt for every cell, so each cell has its own 32-byte wrapping key. Requires HTTPS + YubiKey 5 series.</td></tr>
       </table>
 
       <h3>Crypto stack</h3>

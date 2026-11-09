@@ -403,12 +403,33 @@ def build_v14(deal_file: str, unicode_file: str) -> None:
 
 #: Vectors made by editing a committed vector outside its authenticated bytes,
 #: so they re-derive deterministically from it.
-DERIVED_IDS = ("v14-legacy-fields-ignored",)
+DERIVED_IDS = (
+    "v14-legacy-fields-ignored",
+    # Added 2026-11-09 after the pen test of the same day (KB #2309, #2311).
+    "v13-header-sig-by-not-trusted",
+    "reject-retention-expired-float", "reject-timed-release-locked-exponent",
+    "v13-quorum-3of4-float", "v14-quorum-2of3-exponent",
+)
+
+
+def committed(folder: str, vector_id: str) -> dict:
+    return json.loads((VECTORS / folder / f"{vector_id}.cell").read_text(encoding="utf-8"))
+
+
+def retext(folder: str, vector_id: str, *subs: tuple[str, str]) -> None:
+    """Rewrite numbers in a written vector as text. json.dumps cannot emit `2e0`."""
+    import re
+    path = VECTORS / folder / f"{vector_id}.cell"
+    text = path.read_text(encoding="utf-8")
+    for pattern, repl in subs:
+        text, n = re.subn(pattern, repl, text)
+        assert n, f"{vector_id}: {pattern!r} matched nothing"
+    path.write_text(text, encoding="utf-8")
 
 
 def build_derived(deal_file: str) -> None:
     """Edits a third party can make without any key, which a reader must not act on."""
-    signed = json.loads((VECTORS / "open" / "v14-ecdh-signed.cell").read_text(encoding="utf-8"))
+    signed = committed("open", "v14-ecdh-signed")
     # Top-level original_filename / content_type / original_size are fields of the
     # pre-spec v2.0 envelope (§12), which kept its metadata outside the ciphertext.
     # They are covered by nothing: not header_hash, not the AAD. Reading them on a
@@ -429,6 +450,68 @@ def build_derived(deal_file: str) -> None:
               "On any supported version the manifest is always parsed and the inner signature "
               "always verified; the filename, media type and signer come from inside the "
               "ciphertext.")
+    build_derived_2026_11_09(deal_file)
+
+
+def build_derived_2026_11_09(deal_file: str) -> None:
+    mallory = key("mallory")
+
+    # ≤v1.3 header_sig_by is a label the signer writes about themselves, and
+    # neither header_hash nor header_sig covers it. The reference once returned
+    # it as the verified signer, so any sender could claim another's key.
+    c = committed("open", "v13-ecdh-signed")
+    c["header_sig_by"] = mallory.fingerprint
+    add("v13-header-sig-by-not-trusted", c, expect="open",
+        description="v13-ecdh-signed (signed by bob) with header_sig_by changed to mallory's "
+                    "fingerprint; the signer is still bob",
+        open_with={"keys": ["alice"]}, plaintext=DEAL, payload_file=deal_file,
+        filename="deal.txt", content_type="text/plain", meta={"case": "2026-0417"},
+        signer="bob", must_not_open_with={"keys": ["mallory"]},
+        notes="The signer an opener reports is the fingerprint of header_sig_key, the key that "
+              "verified. header_sig_by changes no authenticated byte, so it can say anything (§4.1).")
+
+    # A number's canonical form is JavaScript's (§4.1.1): 1577836800.0, 1.5778368e9
+    # and 1577836800 all serialize as 1577836800, so the rewrite changes neither
+    # header_hash nor the AAD and the cell still decrypts. A reader must treat
+    # the rewritten value exactly as the integer; one that read it as "absent"
+    # let any third party switch the retention and release checks off.
+    c = committed("reject", "reject-retention-expired")
+    c["header"]["lifetime"]["advisory"]["retain_until"] = 1577836800.0
+    add("reject-retention-expired-float", c, expect="reject",
+        description="reject-retention-expired with retain_until written 1577836800.0",
+        open_with={"keys": ["alice"]}, reject_reason="retention-expired", reject_at_step=0,
+        notes="Same canonical bytes as the integer form (§4.1.1); a reader that only "
+              "recognises integer tokens skips the check. Advisory caveat as for "
+              "reject-retention-expired.")
+
+    add("reject-timed-release-locked-exponent", committed("reject", "reject-timed-release-locked"),
+        expect="reject",
+        description="reject-timed-release-locked with release_at written 4.1024448e9",
+        open_with={"keys": ["alice"]}, reject_reason="timed-release-locked", reject_at_step=0,
+        notes="Same canonical bytes as the integer form (§4.1.1). Expires as a test on 2100-01-01.")
+    retext("reject", "reject-timed-release-locked-exponent",
+           (r'"release_at": 4102444800\b', '"release_at": 4.1024448e9'))
+
+    c = committed("open", "v13-quorum-3of4")
+    c["header"]["threshold"] = {"required": 3.0, "of_total": 4.0}
+    for entry in c["header"]["access_map"]:
+        entry["share_index"] = float(entry["share_index"])
+    add("v13-quorum-3of4-float", c, expect="open",
+        description="v13-quorum-3of4 with required, of_total and every share_index written as N.0",
+        open_with={"keys": ["alice", "bob", "carol"]}, plaintext=DEAL, payload_file=deal_file,
+        filename="deal.txt", content_type="text/plain",
+        must_not_open_with={"keys": ["alice", "bob"]},
+        notes="Same canonical bytes as the integer form (§4.1.1): still 3-of-4, still the same "
+              "x-coordinates.")
+
+    add("v14-quorum-2of3-exponent", committed("open", "v14-quorum-2of3"), expect="open",
+        description="v14-quorum-2of3 with required, of_total and every share_index written Ne0",
+        open_with={"keys": ["carol", "alice"]}, plaintext=DEAL, payload_file=deal_file,
+        filename="deal.txt", content_type="text/plain",
+        must_not_open_with={"keys": ["alice"]},
+        notes="Same canonical bytes as the integer form (§4.1.1).")
+    retext("open", "v14-quorum-2of3-exponent",
+           (r'("(?:required|of_total|share_index)": )(\d+)\b', r'\g<1>\g<2>e0'))
 
 
 def add_derived_only() -> int:

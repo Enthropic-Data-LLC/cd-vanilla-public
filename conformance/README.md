@@ -42,7 +42,7 @@ Python port — the field names are the spec's, not any one library's.
 
 ## `vectors/`
 
-52 captured cells — 24 that must open, 28 that must be refused — indexed by
+57 captured cells — 27 that must open, 30 that must be refused — indexed by
 `vectors/manifest.json`, plus 225 canonical-serialization vectors. All five
 implementations agree on all of them: every open vector opens in the JavaScript
 reference and in the Python, Go, Rust and Java ports with byte-identical
@@ -103,6 +103,18 @@ passphrase entries cheapest first. `v14-kdf-max-single` is one entry at the
 PBKDF2 maximum, which must always open. Both are added with
 `make-vectors.py --add-hardening`.
 
+**Edits that change nothing** — each made by editing a committed vector outside
+its authenticated bytes, with `make-vectors.py --add-derived`.
+`v14-legacy-fields-ignored` adds the top-level fields of a pre-spec v2.0
+envelope. `v13-header-sig-by-not-trusted` relabels bob's v1.3 signature as
+mallory's: the signer an opener reports is the fingerprint of the key that
+verified, never `header_sig_by`. `*-float` and `*-exponent` rewrite
+AAD-bound integers (`retain_until`, `release_at`, `required`, `of_total`,
+`share_index`) as `N.0` or `Ne0`. Those spellings share the integer's canonical
+form (§4.1.1), so the cell still verifies and decrypts, and an opener must treat
+them exactly as the integer: the retention and release vectors still refuse, the
+quorum vectors still open as quorums.
+
 **Refusals** — the half that carries the weight:
 
 | Vector | Caught at §10 step |
@@ -111,7 +123,7 @@ PBKDF2 maximum, which must always open. Both are added with
 | `payload-hash-mismatch` | 2 |
 | `signature-invalid`, `signature-der`, `forged-access-map` | 3 |
 | `tampered-aad`, `version-downgrade` | 4 — GCM tag |
-| `unsupported-version`, `retention-expired`, `timed-release-locked` | 0 |
+| `unsupported-version`, `retention-expired`, `timed-release-locked`, `retention-expired-float`, `timed-release-locked-exponent` | 0 |
 | `quorum-short`, `wrong-key`, `v14-argon2id-weak` | 4 — key recovery |
 | `v14-kdf-work-bound` | 4 — passphrase work bound |
 | `v14-header-signature`, `v14-access-map-too-large` | 1 |

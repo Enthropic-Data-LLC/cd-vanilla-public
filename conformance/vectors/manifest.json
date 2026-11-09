@@ -873,36 +873,6 @@
       "notes": "Openers refuse the parameters (§6.5) and so recover no key from this entry."
     },
     {
-      "id": "v14-legacy-fields-ignored",
-      "file": "open/v14-legacy-fields-ignored.cell",
-      "description": "v14-ecdh-signed plus top-level original_filename/content_type/original_size, added by a third party; a v1.x reader ignores them",
-      "expect": "open",
-      "sealed_by": "python",
-      "cell_version": "1.4",
-      "open_with": {
-        "keys": [
-          "alice"
-        ]
-      },
-      "plaintext": {
-        "file": "payloads/deal.txt",
-        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
-        "size": 81
-      },
-      "filename": "deal.txt",
-      "content_type": "text/plain",
-      "meta": {
-        "case": "2026-0417"
-      },
-      "signer": "bob",
-      "must_not_open_with": {
-        "keys": [
-          "mallory"
-        ]
-      },
-      "notes": "Those three fields belong to legacy v2.0 cells (cd_version, no version) only. On any supported version the manifest is always parsed and the inner signature always verified; the filename, media type and signer come from inside the ciphertext."
-    },
-    {
       "id": "reject-v14-gzip-two-members",
       "file": "reject/reject-v14-gzip-two-members.cell",
       "description": "v1.4 body holding two gzip members; the padding is correct",
@@ -1071,6 +1041,154 @@
       "reject_reason": "kdf-work-exceeded",
       "reject_at_step": 4,
       "notes": "Work per derivation: PBKDF2 = iterations × 2^24; Argon2id = m × t × 10^7. One open spends at most 10^7 × 2^24, the cost of one maximum-parameter entry. Passphrase entries are tried cheapest first. The decoy is tried first (600,000 × 2^24); the real entry would take the total past the limit, so it is never derived. An opener without the bound opens this cell."
+    },
+    {
+      "id": "v14-legacy-fields-ignored",
+      "file": "open/v14-legacy-fields-ignored.cell",
+      "description": "v14-ecdh-signed plus top-level original_filename/content_type/original_size, added by a third party; a v1.x reader ignores them",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.4",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "meta": {
+        "case": "2026-0417"
+      },
+      "signer": "bob",
+      "must_not_open_with": {
+        "keys": [
+          "mallory"
+        ]
+      },
+      "notes": "Those three fields belong to legacy v2.0 cells (cd_version, no version) only. On any supported version the manifest is always parsed and the inner signature always verified; the filename, media type and signer come from inside the ciphertext."
+    },
+    {
+      "id": "v13-header-sig-by-not-trusted",
+      "file": "open/v13-header-sig-by-not-trusted.cell",
+      "description": "v13-ecdh-signed (signed by bob) with header_sig_by changed to mallory's fingerprint; the signer is still bob",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "meta": {
+        "case": "2026-0417"
+      },
+      "signer": "bob",
+      "must_not_open_with": {
+        "keys": [
+          "mallory"
+        ]
+      },
+      "notes": "The signer an opener reports is the fingerprint of header_sig_key, the key that verified. header_sig_by changes no authenticated byte, so it can say anything (§4.1)."
+    },
+    {
+      "id": "reject-retention-expired-float",
+      "file": "reject/reject-retention-expired-float.cell",
+      "description": "reject-retention-expired with retain_until written 1577836800.0",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "retention-expired",
+      "reject_at_step": 0,
+      "notes": "Same canonical bytes as the integer form (§4.1.1); a reader that only recognises integer tokens skips the check. Advisory caveat as for reject-retention-expired."
+    },
+    {
+      "id": "reject-timed-release-locked-exponent",
+      "file": "reject/reject-timed-release-locked-exponent.cell",
+      "description": "reject-timed-release-locked with release_at written 4.1024448e9",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "timed-release-locked",
+      "reject_at_step": 0,
+      "notes": "Same canonical bytes as the integer form (§4.1.1). Expires as a test on 2100-01-01."
+    },
+    {
+      "id": "v13-quorum-3of4-float",
+      "file": "open/v13-quorum-3of4-float.cell",
+      "description": "v13-quorum-3of4 with required, of_total and every share_index written as N.0",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.3",
+      "open_with": {
+        "keys": [
+          "alice",
+          "bob",
+          "carol"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "must_not_open_with": {
+        "keys": [
+          "alice",
+          "bob"
+        ]
+      },
+      "notes": "Same canonical bytes as the integer form (§4.1.1): still 3-of-4, still the same x-coordinates."
+    },
+    {
+      "id": "v14-quorum-2of3-exponent",
+      "file": "open/v14-quorum-2of3-exponent.cell",
+      "description": "v14-quorum-2of3 with required, of_total and every share_index written Ne0",
+      "expect": "open",
+      "sealed_by": "python",
+      "cell_version": "1.4",
+      "open_with": {
+        "keys": [
+          "carol",
+          "alice"
+        ]
+      },
+      "plaintext": {
+        "file": "payloads/deal.txt",
+        "sha256": "9a542dc230330fdd74b444b340292f5554da605c27b02ce91ad0818377277358",
+        "size": 81
+      },
+      "filename": "deal.txt",
+      "content_type": "text/plain",
+      "must_not_open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "notes": "Same canonical bytes as the integer form (§4.1.1)."
     }
   ]
 }

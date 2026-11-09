@@ -33,8 +33,12 @@ pub struct Lifetime {
     pub disposal_action: String,
 }
 
+/// `1577836800.0` and `1.5778368e9` are the integer 1577836800: they share its
+/// canonical form (§4.1.1), so a third party can rewrite one as the other
+/// without breaking header_hash or the AAD. Reading only integer tokens let
+/// that rewrite switch the retention and release checks off.
 fn opt_int(map: &Value, key: &str) -> Option<i64> {
-    map.get(key).and_then(|v| v.as_i64())
+    map.get(key).and_then(crate::crypto::json_int)
 }
 
 /// Read either the v1.3 split shape or the flat v1.0-v1.2 shape.

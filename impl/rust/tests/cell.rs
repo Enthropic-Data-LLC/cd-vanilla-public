@@ -224,6 +224,19 @@ fn access_control() {
         open(&cell, &keys_for(&one)),
         Err(Error::QuorumNotMet { needed: 2, unlocked: 1 })
     ));
+
+    // A share index outside 1..255 is refused, never narrowed: `as u8` once
+    // read 257 as 1 and 256 as 0.
+    for bad in [0, 256, 257] {
+        let mut edited = cell.clone();
+        edited["header"]["access_map"][1]["share_index"] = json!(bad);
+        rehash(&mut edited);
+        let refused = open(&edited, &keys_for(&two));
+        assert!(
+            matches!(&refused, Err(Error::Malformed(m)) if m.contains(&format!("share index {bad}"))),
+            "share_index {bad}: {refused:?}"
+        );
+    }
 }
 
 #[test]

@@ -706,10 +706,12 @@ fn open_cell(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
         .or_else(|| payload.get("ct"))
         .and_then(|v| v.as_str())
         .ok_or_else(|| Error::Malformed("payload is missing ciphertext".into()))?;
+    // json_int, not as_u64: `2.0` and `2e0` are 2 (§4.1.1), and reading them
+    // as absent turned a 2-of-3 quorum into "no quorum".
     let required = header
         .get("threshold")
         .and_then(|t| t.get("required"))
-        .and_then(|v| v.as_u64())
+        .and_then(crypto::json_int)
         .unwrap_or(1)
         .max(1) as usize;
 
@@ -737,10 +739,14 @@ fn open_cell(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
         let mut shares = Vec::new();
         for &(index, entry, kdf, work) in &order {
             if let Some(material) = attempt(entry, kdf, work) {
+                // Checked, never `as u8`: 256 would wrap to 0 and 257 to 1.
                 let x = entry
                     .get("share_index")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or((index + 1) as u64) as u8;
+                    .and_then(crypto::json_int)
+                    .unwrap_or((index + 1) as i64);
+                let x = u8::try_from(x).ok().filter(|&x| x >= 1).ok_or_else(|| {
+                    Error::Malformed(format!("invalid share index {x} — must be 1..255"))
+                })?;
                 shares.push(crate::gf256::Share { x, data: material });
                 if shares.len() >= required {
                     break;

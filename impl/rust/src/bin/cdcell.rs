@@ -52,7 +52,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("error: {e}");
+            eprintln!("error: {}", shown(&e.to_string()));
             ExitCode::FAILURE
         }
     }
@@ -257,16 +257,18 @@ fn cmd_inspect(args: &[String]) -> CmdResult {
         .or_else(|| cell.get("cd_version"))
         .and_then(|v| v.as_str())
         .unwrap_or("(none)");
-    println!("version      {version}");
-    println!("doc_id       {}", cell["doc_id"].as_str().unwrap_or(""));
-    println!("created_at   {}", cell["created_at"]);
+    // Every value here can be edited by anyone who handled the file.
+    println!("version      {}", shown(version));
+    println!("doc_id       {}", shown(cell["doc_id"].as_str().unwrap_or("")));
+    println!("created_at   {}", shown(&cell["created_at"].to_string()));
     println!(
         "threshold    {}-of-{}",
-        header["threshold"]["required"], header["threshold"]["of_total"]
+        shown(&header["threshold"]["required"].to_string()),
+        shown(&header["threshold"]["of_total"].to_string())
     );
 
     if let Some(lt) = lifetime::read(header.get("lifetime")) {
-        println!("lifetime     type={}", lt.type_);
+        println!("lifetime     type={}", shown(&lt.type_));
         println!(
             "  advisory   retain_until={:?} release_at={:?} single_use={} minimum_atl={}",
             lt.retain_until, lt.release_at, lt.single_use, lt.minimum_atl
@@ -274,7 +276,8 @@ fn cmd_inspect(args: &[String]) -> CmdResult {
         println!("             (advisory: honoured by conforming software, NOT enforced against a keyholder)");
         println!(
             "  disposal   at={:?} action={}",
-            lt.disposal_at, lt.disposal_action
+            lt.disposal_at,
+            shown(&lt.disposal_action)
         );
         println!("             (enforced by whoever stores the ciphertext)");
     }
@@ -287,13 +290,13 @@ fn cmd_inspect(args: &[String]) -> CmdResult {
     for entry in entries.into_iter().flatten() {
         let share = entry
             .get("share_index")
-            .map(|i| format!("  share {i}"))
+            .map(|i| format!("  share {}", shown(&i.to_string())))
             .unwrap_or_default();
         println!(
-            "  - {:<12} {}  {:?}{share}",
-            entry["method"].as_str().unwrap_or(""),
-            entry["fingerprint"].as_str().unwrap_or(""),
-            entry["label"].as_str().unwrap_or("")
+            "  - {:<12} {}  {}{share}",
+            shown(entry["method"].as_str().unwrap_or("")),
+            shown(entry["fingerprint"].as_str().unwrap_or("")),
+            shown(&format!("{:?}", entry["label"].as_str().unwrap_or("")))
         );
     }
 
@@ -307,7 +310,7 @@ fn cmd_inspect(args: &[String]) -> CmdResult {
                 println!(
                     "ciphertext   {} bytes ({})",
                     bytes.len(),
-                    payload["alg"].as_str().unwrap_or("")
+                    shown(payload["alg"].as_str().unwrap_or(""))
                 );
             }
         }
@@ -349,29 +352,102 @@ fn cmd_open(args: &[String]) -> CmdResult {
     let mut destination = PathBuf::from(out);
     if destination.is_dir() || out.ends_with('/') {
         std::fs::create_dir_all(&destination)?;
-        let name = Path::new(&result.filename)
-            .file_name()
-            .map(|s| s.to_owned())
-            .unwrap_or_else(|| "decrypted".into());
-        destination.push(name);
+        destination.push(safe_filename(&result.filename));
     }
-    std::fs::write(&destination, &result.data)?;
+    write_new(&destination, &result.data)?;
 
-    println!(
-        "wrote {}  ({} bytes, {})",
-        destination.display(),
-        result.data.len(),
-        result.content_type
-    );
+    // Who signed comes first, before any text the sender chose.
     if result.signed {
         println!(
             "signed by key {}",
             result.signer_fingerprint.as_deref().unwrap_or("(unknown)")
         );
+    } else {
+        println!("not signed     nothing in this cell says who sent it");
     }
+    println!(
+        "wrote {}  ({} bytes, {})",
+        shown(&destination.display().to_string()),
+        result.data.len(),
+        shown(&result.content_type)
+    );
     if let Some(meta) = &result.meta {
-        println!("sender meta: {}", canonicalize(meta)?);
+        println!("sender meta: {}", shown(&canonicalize(meta)?));
     }
+    Ok(())
+}
+
+// ── Sender-chosen text ──────────────────────────────────────────────────────
+// The filename, media type and meta come from whoever sealed the cell, and
+// inspect's header fields from anyone who handled it. None of it may reach the
+// filesystem or the terminal as is: a newline or ESC can print a fake
+// "signed by key" line, bidi controls can reverse what a name appears to say.
+
+/// C0/C1 controls, bidi and zero-width format characters, line and paragraph
+/// separators. The same set in every port's CLI.
+fn unsafe_char(c: char) -> bool {
+    let o = c as u32;
+    o < 0x20
+        || (0x7f..=0x9f).contains(&o)
+        || o == 0x061c
+        || (0x200b..=0x200f).contains(&o)
+        || (0x2028..=0x202e).contains(&o)
+        || (0x2060..=0x2069).contains(&o)
+        || o == 0xfeff
+}
+
+/// Text safe to print: every unsafe character as a visible `\uXXXX` escape.
+fn shown(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if unsafe_char(c) {
+            out.push_str(&format!("\\u{:04x}", c as u32));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The sender's filename as a plain name in the output directory: no path,
+/// no unsafe characters, no leading dot (no .bashrc, .envrc), at most 200 bytes.
+fn safe_filename(name: &str) -> String {
+    let base = name.rsplit(|c| c == '/' || c == '\\').next().unwrap_or("");
+    let base: String = base.chars().filter(|&c| !unsafe_char(c)).collect();
+    let base = base.trim_start_matches(|c: char| c == '.' || c.is_whitespace());
+    let mut cut = base.len().min(200);
+    while !base.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let base = base[..cut].trim_end();
+    if base.is_empty() {
+        "decrypted".into()
+    } else {
+        base.to_string()
+    }
+}
+
+/// Create the file; never overwrite it or follow a symlink. Owner-only: it is
+/// the plaintext of an encrypted file.
+fn write_new(path: &Path, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = match options.open(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(format!(
+                "{} already exists — not overwriting it; name a new file with --out",
+                path.display()
+            )
+            .into())
+        }
+        other => other?,
+    };
+    file.write_all(data)?;
     Ok(())
 }
 
@@ -470,4 +546,66 @@ fn prompt_passphrase(prompt: &str) -> Result<String, Box<dyn std::error::Error>>
         eprintln!();
     }
     Ok(line.trim_end_matches(['\r', '\n']).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Sender-chosen filename and text (pen test 2026-11-09, M1/M2).
+
+    #[test]
+    fn safe_filename_cases() {
+        let long = "\u{e9}".repeat(150);
+        let cut = "\u{e9}".repeat(100);
+        for (raw, want) in [
+            ("report.pdf", "report.pdf"),
+            ("../../etc/passwd", "passwd"),
+            ("a\\b\\c.txt", "c.txt"),
+            (".bashrc", "bashrc"),
+            (". .envrc", "envrc"),
+            ("..", "decrypted"),
+            ("/", "decrypted"),
+            ("", "decrypted"),
+            ("x\u{0}y\nz", "xyz"),
+            ("contract\u{202e}fdp.exe", "contractfdp.exe"),
+            (long.as_str(), cut.as_str()),
+        ] {
+            assert_eq!(safe_filename(raw), want, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn shown_escapes_what_could_forge_a_line() {
+        let got = shown("application/pdf\nsigned by key aff6a52990ce2335\u{1b}[8m\u{202e}");
+        assert!(!got.contains(['\n', '\u{1b}', '\u{202e}']), "{got:?}");
+        for esc in ["\\u000a", "\\u001b", "\\u202e"] {
+            assert!(got.contains(esc), "{got:?} lacks {esc}");
+        }
+    }
+
+    #[test]
+    fn write_new_never_overwrites() {
+        let dir = std::env::temp_dir().join(format!("cdcell-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mine = dir.join(".bashrc");
+        std::fs::write(&mine, b"mine").unwrap();
+        assert!(write_new(&mine, b"attacker").is_err());
+        assert_eq!(std::fs::read(&mine).unwrap(), b"mine");
+        #[cfg(unix)]
+        {
+            let link = dir.join("link");
+            std::os::unix::fs::symlink(dir.join("elsewhere"), &link).unwrap();
+            assert!(write_new(&link, b"attacker").is_err(), "followed a dangling symlink");
+            assert!(!dir.join("elsewhere").exists());
+        }
+        let fresh = dir.join("fresh");
+        write_new(&fresh, b"ok").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

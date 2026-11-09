@@ -148,17 +148,17 @@ public in this repository on 2026-10-31.
 Block 972397: merkle root `3616ab4dc0b58b25a94f7d9d40129b90ea1bcd99284df921b12b1c2d41e1801b`,
 mined 2026-10-21 00:35:33 UTC. Frozen copies and proofs: `docs/defensive-pub/anchors/v1.4/`.
 
-### Live files and their root proofs — updated 2026-11-08
+### Live files and their root proofs — updated 2026-11-09
 
 The `.ots` file beside each live file is the proof for *those* bytes:
 
 | Live file | SHA-256 | Root proof |
 |---|---|---|
 | `docs/SPEC.md` | `35d2883e…300974f8` | the v1.4 proof above — the file is byte-identical to `anchors/v1.4/SPEC.md` |
-| `cell-crypto.js` | `16401a6b73d899f1e733e7e6fdfc9be08636bf2946bc2af8044fe25a379d5047` | stamped 2026-11-08 (second stamp that day) — **pending**; no block is claimed until `ots upgrade` confirms one |
+| `cell-crypto.js` | `5864678503eee949ed28f5a4d88b87894a10702d2c46d0d2da32ed4a79661793` | stamped 2026-11-09 — **pending**; no block is claimed until `ots upgrade` confirms one |
 | `docs/DEFENSIVE-PUBLISHING-GUIDE.md` | `6d97cc4e…7dd95ee0` | the v1.2 proof |
 
-`cell-crypto.js` is v1.4 plus four implementation hardenings, and is **no longer
+`cell-crypto.js` is v1.4 plus five implementation hardenings, and is **no longer
 byte-identical to the v1.4 anchor**. First, 2026-10-31: an opener refuses a PBKDF2 entry whose
 iteration count exceeds 10,000,000 instead of deriving with it. The count is read
 from the file and `header_hash` is unkeyed, so before this an edited entry could
@@ -205,10 +205,36 @@ were fixed the same day, and ten conformance vectors (`*-gzip-*`,
 `*-padding-oversized`, `*-padding-unpadded`, `v14-kdf-*`,
 `reject-v14-kdf-work-bound`) pin the behaviour.
 
+Fifth hardening, 2026-11-09: two changes. First, for a cell of v1.3 or earlier
+the opener now reports as the signer the fingerprint of `header_sig_key`, the
+key the signature verified with. Before, it reported `header_sig_by`, a label
+the sender writes about themselves that neither `header_hash` nor the signature
+covers, so a sender could sign with their own key and name someone else's. The
+Python, Go, Rust and Java ports already recomputed the fingerprint from the key;
+conformance vector `v13-header-sig-by-not-trusted` pins the behaviour. v1.4
+signatures were not affected. Second, the writer gives every `yubikey-prf` entry
+a fresh random 32-byte `prf_salt` instead of the one saved when the security key
+was registered. The PRF output for a salt is the entry's wrapping key, so a
+reused salt meant one wrapping key for every cell sealed to that security key.
+The salt travels in the entry, as §6.3 always described it, so every existing
+cell still opens. No format change.
+
+The same day, in the ports only: the Rust port reads `retain_until`,
+`release_at`, `minimum_atl`, `threshold.required` and `share_index` as JSON
+integers in any spelling. `1577836800.0` and `1.5778368e9` serialize to the same
+canonical bytes as `1577836800` (§4.1.1), so a third party could rewrite one as
+the other without breaking `header_hash` or the AAD, and Rust had read the
+rewritten value as absent. Four vectors (`*-float`, `*-exponent`) pin this for
+every implementation. The command-line tools of all four ports no longer
+overwrite an existing file, strip a leading dot and control or bidi characters
+from the name a cell asks for, print the signer before any text the sender
+chose, and escape that text.
+
 Superseded root proofs, not to be cited: `1c1b8371…` (the 2026-10-31 bytes; its
 pending proof is in git history at commit `3453f29`), `191ed2b0…` (the
-2026-11-05 bytes; at commit `412e886`) and `efa0a4f8…` (the first 2026-11-08
-bytes; at commit `69e1880`).
+2026-11-05 bytes; at commit `412e886`), `efa0a4f8…` (the first 2026-11-08
+bytes; at commit `69e1880`) and `16401a6b…` (the second 2026-11-08 bytes; at
+commit `276b781`).
 
 When the v1.4 files were merged here on 2026-10-31, the root proofs for
 `docs/SPEC.md` and `cell-crypto.js` still described v1.3-era bytes; the v1.4

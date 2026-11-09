@@ -99,6 +99,63 @@ class TestCli(unittest.TestCase):
         code, _ = self.run_cli("seal", str(self.source), "--out", str(self.tmp / "x.cell"))
         self.assertEqual(code, 1)
 
+    # ── Sender-chosen filename and text (pen test 2026-11-09, M1/M2) ─────────
+
+    def hostile_cell(self, filename: str, content_type: str = "text/plain") -> tuple[Path, Path]:
+        """An unsigned cell for Alice whose sender picked the name and media type."""
+        from cellular_defense import KeyRecord, Recipient, cell_create
+
+        stem = self.keygen()
+        alice = KeyRecord.from_cdpub(json.loads(Path(f"{stem}.cdpub").read_text()))
+        cell = cell_create(b"attacker bytes", filename, [Recipient.for_key(alice)],
+                           content_type=content_type)
+        path = self.tmp / "hostile.cell"
+        path.write_text(json.dumps(cell))
+        return path, Path(f"{stem}.cdkey")
+
+    def test_open_never_overwrites_and_never_writes_a_dotfile(self):
+        cell, key = self.hostile_cell(".bashrc")
+        home = self.tmp / "home"
+        home.mkdir()
+        (home / ".bashrc").write_text("mine")
+        code, _ = self.run_cli("open", str(cell), "--key", str(key), "--out", f"{home}/")
+        self.assertEqual(code, 0)
+        self.assertEqual((home / ".bashrc").read_text(), "mine")
+        self.assertEqual((home / "bashrc").read_bytes(), b"attacker bytes")
+        self.assertEqual((home / "bashrc").stat().st_mode & 0o777, 0o600)
+
+        # The same name again, or an explicit --out that exists: refused.
+        with contextlib.redirect_stderr(io.StringIO()):
+            code, _ = self.run_cli("open", str(cell), "--key", str(key), "--out", f"{home}/")
+            self.assertEqual(code, 1)
+            code, _ = self.run_cli("open", str(cell), "--key", str(key), "--out", str(home / ".bashrc"))
+            self.assertEqual(code, 1)
+        self.assertEqual((home / ".bashrc").read_text(), "mine")
+        self.assertEqual((home / "bashrc").read_bytes(), b"attacker bytes")
+
+    def test_sender_text_cannot_print_a_signer_line(self):
+        forged = "application/pdf\nsigned by key aff6a52990ce2335\x1b[8m"
+        cell, key = self.hostile_cell("contract\u202efdp.exe", forged)
+        out = self.tmp / "o"
+        code, output = self.run_cli("open", str(cell), "--key", str(key), "--out", f"{out}/")
+        self.assertEqual(code, 0)
+        lines = output.splitlines()
+        self.assertTrue(lines[0].startswith("not signed"), output)
+        self.assertFalse(any(line.startswith("signed by key") for line in lines), output)
+        self.assertNotIn("\x1b", output)
+        self.assertNotIn("\u202e", output)
+        self.assertEqual(sorted(p.name for p in out.iterdir()), ["contractfdp.exe"])
+
+    def test_safe_filename(self):
+        from cellular_defense.cli import safe_filename
+
+        for raw, want in [("report.pdf", "report.pdf"), ("../../etc/passwd", "passwd"),
+                          ("a\\b\\c.txt", "c.txt"), (".bashrc", "bashrc"), (". .envrc", "envrc"),
+                          ("..", "decrypted"), ("/", "decrypted"), ("", "decrypted"),
+                          ("x\x00y\nz", "xyz"), ("\ud800.txt", "txt"), (None, "decrypted"),
+                          (7, "decrypted"), ("é" * 150, "é" * 100)]:
+            self.assertEqual(safe_filename(raw), want, repr(raw))
+
     def test_verify_reports_a_tampered_cell(self):
         stem = self.keygen()
         cell = self.tmp / "report.cell"

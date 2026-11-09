@@ -28,6 +28,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Enthropic-Data-LLC/cd-vanilla-public/impl/go/cell"
 )
@@ -63,7 +65,7 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: %s\n", shown(err.Error()))
 		os.Exit(1)
 	}
 }
@@ -302,18 +304,19 @@ func cmdInspect(args []string) error {
 	if version == "" {
 		version = c.GetString("cd_version")
 	}
-	fmt.Printf("version      %s\n", version)
-	fmt.Printf("doc_id       %s\n", c.GetString("doc_id"))
+	// Every value here can be edited by anyone who handled the file.
+	fmt.Printf("version      %s\n", shown(version))
+	fmt.Printf("doc_id       %s\n", shown(c.GetString("doc_id")))
 	fmt.Printf("created_at   %d\n", header.GetInt("created_at", c.GetInt("created_at", 0)))
 	th := header.GetObject("threshold")
 	fmt.Printf("threshold    %d-of-%d\n", th.GetInt("required", 1), th.GetInt("of_total", 1))
 
 	if lt := cell.ReadLifetime(header.GetObject("lifetime")); lt != nil {
-		fmt.Printf("lifetime     type=%s\n", lt.Type)
+		fmt.Printf("lifetime     type=%s\n", shown(lt.Type))
 		fmt.Printf("  advisory   retain_until=%d release_at=%d single_use=%t minimum_atl=%d\n",
 			lt.RetainUntil, lt.ReleaseAt, lt.SingleUse, lt.MinimumATL)
 		fmt.Printf("             (advisory: honoured by conforming software, NOT enforced against a keyholder)\n")
-		fmt.Printf("  disposal   at=%d action=%s\n", lt.DisposalAt, lt.DisposalAction)
+		fmt.Printf("  disposal   at=%d action=%s\n", lt.DisposalAt, shown(lt.DisposalAction))
 		fmt.Printf("             (enforced by whoever stores the ciphertext)\n")
 	}
 
@@ -327,8 +330,8 @@ func cmdInspect(args []string) error {
 		if !ok {
 			continue
 		}
-		line := fmt.Sprintf("  - %-12s %s  %q", entry.GetString("method"),
-			entry.GetString("fingerprint"), entry.GetString("label"))
+		line := fmt.Sprintf("  - %-12s %s  %s", shown(entry.GetString("method")),
+			shown(entry.GetString("fingerprint")), shown(fmt.Sprintf("%q", entry.GetString("label"))))
 		if entry.Has("share_index") {
 			line += fmt.Sprintf("  share %d", entry.GetInt("share_index", 0))
 		}
@@ -345,7 +348,7 @@ func cmdInspect(args []string) error {
 			ctB64 = payload.GetString("ct")
 		}
 		if ct, err := cell.DecodeB64(ctB64, "ciphertext"); err == nil {
-			fmt.Printf("ciphertext   %d bytes (%s)\n", len(ct), payload.GetString("alg"))
+			fmt.Printf("ciphertext   %d bytes (%s)\n", len(ct), shown(payload.GetString("alg")))
 		}
 	}
 	fmt.Println("\nnot visible here: the plaintext, the filename, the media type, the original")
@@ -409,21 +412,95 @@ func cmdOpen(args []string) error {
 		if err := os.MkdirAll(destination, 0o755); err != nil {
 			return err
 		}
-		destination = filepath.Join(destination, filepath.Base(result.Filename))
+		destination = filepath.Join(destination, safeFilename(result.Filename))
 	}
-	if err := os.WriteFile(destination, result.Data, 0o644); err != nil {
+	if err := writeNew(destination, result.Data); err != nil {
 		return err
 	}
-	fmt.Printf("wrote %s  (%d bytes, %s)\n", destination, len(result.Data), result.ContentType)
+	// Who signed comes first, before any text the sender chose.
 	if result.Signed {
 		fmt.Printf("signed by key %s\n", result.SignerFingerprint)
+	} else {
+		fmt.Println("not signed     nothing in this cell says who sent it")
 	}
+	fmt.Printf("wrote %s  (%d bytes, %s)\n", shown(destination), len(result.Data), shown(result.ContentType))
 	if result.Meta != nil {
 		if encoded, err := cell.Canonicalize(result.Meta); err == nil {
-			fmt.Printf("sender meta: %s\n", encoded)
+			fmt.Printf("sender meta: %s\n", shown(encoded))
 		}
 	}
 	return nil
+}
+
+// ── Sender-chosen text ───────────────────────────────────────────────────────
+// The filename, media type and meta come from whoever sealed the cell, and
+// inspect's header fields from anyone who handled it. None of it may reach the
+// filesystem or the terminal as is: a newline or ESC can print a fake
+// "signed by key" line, bidi controls can reverse what a name appears to say.
+
+// unsafeRune: C0/C1 controls, bidi and zero-width format characters, line and
+// paragraph separators. The same set in every port's CLI.
+func unsafeRune(r rune) bool {
+	return r < 0x20 || (r >= 0x7f && r <= 0x9f) || r == 0x061c || (r >= 0x200b && r <= 0x200f) ||
+		(r >= 0x2028 && r <= 0x202e) || (r >= 0x2060 && r <= 0x2069) || r == 0xfeff
+}
+
+// shown is text safe to print: every unsafe character as a visible \uXXXX escape.
+func shown(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if unsafeRune(r) {
+			fmt.Fprintf(&b, "\\u%04x", r)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// safeFilename turns the sender's filename into a plain name in the output
+// directory: no path, no unsafe characters, no leading dot (no .bashrc,
+// .envrc), at most 200 bytes.
+func safeFilename(name string) string {
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
+		name = name[i+1:]
+	}
+	name = strings.Map(func(r rune) rune {
+		if unsafeRune(r) {
+			return -1
+		}
+		return r
+	}, name)
+	name = strings.TrimLeftFunc(name, func(r rune) bool { return r == '.' || unicode.IsSpace(r) })
+	if len(name) > 200 {
+		cut := 200
+		for cut > 0 && !utf8.RuneStart(name[cut]) {
+			cut--
+		}
+		name = name[:cut]
+	}
+	name = strings.TrimRightFunc(name, unicode.IsSpace)
+	if name == "" {
+		return "decrypted"
+	}
+	return name
+}
+
+// writeNew creates the file and never overwrites it or follows a symlink.
+// Owner-only: it is the plaintext of an encrypted file.
+func writeNew(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("%s already exists — not overwriting it; name a new file with -out", path)
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────

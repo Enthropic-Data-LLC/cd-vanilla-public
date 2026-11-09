@@ -59,10 +59,10 @@ public final class Cdcell {
                 }
             }
         } catch (CellException e) {
-            System.err.println("error: " + e.getMessage());
+            System.err.println("error: " + shown(e.getMessage()));
             System.exit(1);
         } catch (Exception e) {
-            System.err.println("error: " + e);
+            System.err.println("error: " + shown(e));
             System.exit(1);
         }
     }
@@ -251,8 +251,9 @@ public final class Cdcell {
         if (version == null) {
             version = Json.string(cell, "cd_version");
         }
-        System.out.println("version      " + version);
-        System.out.println("doc_id       " + Json.string(cell, "doc_id"));
+        // Every value here can be edited by anyone who handled the file.
+        System.out.println("version      " + shown(version));
+        System.out.println("doc_id       " + shown(Json.string(cell, "doc_id")));
         System.out.println("created_at   " + Json.integer(cell, "created_at", 0));
         Map<String, Object> threshold = Json.object(header, "threshold");
         System.out.println("threshold    " + Json.integer(threshold, "required", 1)
@@ -260,7 +261,7 @@ public final class Cdcell {
 
         Lifetime lifetime = Lifetime.read(Json.object(header, "lifetime"));
         if (lifetime != null) {
-            System.out.println("lifetime     type=" + lifetime.type());
+            System.out.println("lifetime     type=" + shown(lifetime.type()));
             System.out.println("  advisory   retain_until=" + lifetime.retainUntil()
                     + " release_at=" + lifetime.releaseAt()
                     + " single_use=" + lifetime.singleUse()
@@ -268,7 +269,7 @@ public final class Cdcell {
             System.out.println("             (advisory: honoured by conforming software, "
                     + "NOT enforced against a keyholder)");
             System.out.println("  disposal   at=" + lifetime.disposalAt()
-                    + " action=" + lifetime.disposalAction());
+                    + " action=" + shown(lifetime.disposalAction()));
             System.out.println("             (enforced by whoever stores the ciphertext)");
         }
 
@@ -283,8 +284,8 @@ public final class Cdcell {
                 String share = entry.containsKey("share_index")
                         ? "  share " + Json.integer(entry, "share_index", 0) : "";
                 System.out.printf("  - %-12s %s  \"%s\"%s%n",
-                        Json.string(entry, "method"), Json.string(entry, "fingerprint"),
-                        Json.string(entry, "label"), share);
+                        shown(Json.string(entry, "method")), shown(Json.string(entry, "fingerprint")),
+                        shown(Json.string(entry, "label")), share);
             }
         }
 
@@ -300,7 +301,7 @@ public final class Cdcell {
             if (ct != null) {
                 System.out.println("ciphertext   "
                         + CellCrypto.decodeB64(ct, "ciphertext").length
-                        + " bytes (" + Json.string(payload, "alg") + ")");
+                        + " bytes (" + shown(Json.string(payload, "alg")) + ")");
             }
         }
         System.out.println();
@@ -337,17 +338,113 @@ public final class Cdcell {
         Path destination = Path.of(out);
         if (Files.isDirectory(destination) || out.endsWith("/")) {
             Files.createDirectories(destination);
-            destination = destination.resolve(Path.of(result.filename()).getFileName());
+            destination = destination.resolve(safeFilename(result.filename()));
         }
-        Files.write(destination, result.data());
+        writeNew(destination, result.data());
 
-        System.out.println("wrote " + destination + "  (" + result.data().length
-                + " bytes, " + result.contentType() + ")");
+        // Who signed comes first, before any text the sender chose.
         if (result.signed()) {
             System.out.println("signed by key " + result.signerFingerprint());
+        } else {
+            System.out.println("not signed     nothing in this cell says who sent it");
         }
+        System.out.println("wrote " + shown(destination) + "  (" + result.data().length
+                + " bytes, " + shown(result.contentType()) + ")");
         if (result.meta() != null) {
-            System.out.println("sender meta: " + Canonical.canonicalize(result.meta()));
+            System.out.println("sender meta: " + shown(Canonical.canonicalize(result.meta())));
+        }
+    }
+
+    // ─── sender-chosen text ─────────────────────────────────────────────────
+    // The filename, media type and meta come from whoever sealed the cell, and
+    // inspect's header fields from anyone who handled it. None of it may reach
+    // the filesystem or the terminal as is: a newline or ESC can print a fake
+    // "signed by key" line, bidi controls can reverse what a name appears to say.
+
+    /**
+     * C0/C1 controls, bidi and zero-width format characters, line and paragraph
+     * separators, lone surrogates. The same set in every port's CLI.
+     */
+    static boolean unsafeChar(int c) {
+        return c < 0x20 || (c >= 0x7f && c <= 0x9f) || c == 0x061c
+                || (c >= 0x200b && c <= 0x200f) || (c >= 0x2028 && c <= 0x202e)
+                || (c >= 0x2060 && c <= 0x2069) || c == 0xfeff
+                || (c >= 0xd800 && c <= 0xdfff);
+    }
+
+    /** Text safe to print: every unsafe character as a visible \\uXXXX escape. */
+    static String shown(Object value) {
+        String s = String.valueOf(value);
+        StringBuilder out = new StringBuilder(s.length());
+        s.codePoints().forEach(c -> {
+            if (unsafeChar(c)) {
+                out.append(String.format("\\u%04x", c));
+            } else {
+                out.appendCodePoint(c);
+            }
+        });
+        return out.toString();
+    }
+
+    private static boolean space(int c) {
+        return Character.isWhitespace(c) || Character.isSpaceChar(c);
+    }
+
+    /**
+     * The sender's filename as a plain name in the output directory: no path,
+     * no unsafe characters, no leading dot (no .bashrc, .envrc), at most 200 bytes.
+     */
+    static String safeFilename(String name) {
+        if (name == null) {
+            return "decrypted";
+        }
+        String base = name.substring(Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\')) + 1);
+        int[] kept = base.codePoints().filter(c -> !unsafeChar(c)).toArray();
+        int start = 0;
+        while (start < kept.length && (kept[start] == '.' || space(kept[start]))) {
+            start++;
+        }
+        StringBuilder out = new StringBuilder();
+        int bytes = 0;
+        for (int i = start; i < kept.length; i++) {
+            int c = kept[i];
+            int n = c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+            if (bytes + n > 200) {
+                break;
+            }
+            out.appendCodePoint(c);
+            bytes += n;
+        }
+        int end = out.length();
+        while (end > 0 && space(out.codePointBefore(end))) {
+            end -= Character.charCount(out.codePointBefore(end));
+        }
+        return end == 0 ? "decrypted" : out.substring(0, end);
+    }
+
+    /**
+     * Create the file; never overwrite it or follow a symlink. Owner-only: it is
+     * the plaintext of an encrypted file.
+     */
+    static void writeNew(Path path, byte[] data) throws Exception {
+        java.util.Set<java.nio.file.OpenOption> options = java.util.Set.of(
+                java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE);
+        java.nio.channels.SeekableByteChannel opened;
+        try {
+            try {
+                opened = Files.newByteChannel(path, options,
+                        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+            } catch (UnsupportedOperationException notPosix) {
+                opened = Files.newByteChannel(path, options);
+            }
+        } catch (java.nio.file.FileAlreadyExistsException e) {
+            throw new CellException(path + " already exists — not overwriting it; name a new file with --out");
+        }
+        try (java.nio.channels.SeekableByteChannel channel = opened) {
+            java.nio.ByteBuffer buffer = java.nio.ByteBuffer.wrap(data);
+            while (buffer.hasRemaining()) {
+                channel.write(buffer);
+            }
         }
     }
 
