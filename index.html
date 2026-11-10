@@ -6,21 +6,23 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-<title>Cell Format</title>
+<title>Cell Format — encrypt any file in your browser</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 
-<nav role="navigation" aria-label="Main navigation">
+<a class="skip-link" href="#app">Skip to content</a>
+
+<nav aria-label="Main">
   <div class="logo" aria-hidden="true">Cell <span>Format</span></div>
-  <div class="nav-links" role="menubar">
-    <button id="nav-home" role="menuitem">Home</button>
-    <button id="nav-keychain" role="menuitem">Keychain</button>
-    <button id="nav-about" role="menuitem">About</button>
+  <div class="nav-links">
+    <button id="nav-home">Home</button>
+    <button id="nav-keychain">Keychain</button>
+    <button id="nav-about">About</button>
   </div>
 </nav>
 
-<div id="app"></div>
+<main id="app" tabindex="-1"></main>
 
 <div id="modal-overlay"></div>
 

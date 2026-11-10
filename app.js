@@ -15,22 +15,80 @@ let _mitosisSource = null;  // { bytes, filename, contentType } from last succes
 // UI HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Errors are announced at once (role=alert), progress and success politely (role=status).
 function showAlert(id, msg, type) {
   const el = document.getElementById(id);
   if (!el) return;
   el.className = 'alert alert-' + (type || 'info');
+  el.setAttribute('role', type === 'error' ? 'alert' : 'status');
   el.textContent = msg;
   el.style.display = 'block';
 }
 function hideAlert(id) { const el = document.getElementById(id); if (el) el.style.display = 'none'; }
 
+// ── Dialog ───────────────────────────────────────────────────────────────────
+// One dialog at a time, in #modal-overlay. While it is open the page behind it is
+// inert, focus starts inside it, Tab stays inside it and Escape closes it (keydown
+// listener under INIT), and closing returns focus to the control that opened it.
+let _modalOpener = null;
+let _confirmResolve = null;   // pending askConfirm(), resolved false by any close
+
+function setPageInert(on) {
+  for (const sel of ['.skip-link', 'nav', '#app', 'footer']) {
+    const el = document.querySelector(sel);
+    if (el) el.inert = on;
+  }
+}
+
 function showModal(html) {
   const ov = document.getElementById('modal-overlay');
-  ov.innerHTML = `<div class="modal-box">${html}</div>`;
+  if (_confirmResolve) { const r = _confirmResolve; _confirmResolve = null; r(false); }
+  if (ov.style.display !== 'flex') _modalOpener = document.activeElement;
+  ov.innerHTML = `<div class="modal-box" role="dialog" aria-modal="true" tabindex="-1">${html}</div>`;
+  const box = ov.firstElementChild;
+  const title = box.querySelector('h2');
+  if (title) { title.id = 'modal-title'; box.setAttribute('aria-labelledby', 'modal-title'); }
   ov.style.display = 'flex';
   ov.onclick = e => { if (e.target === ov) closeModal(); };
+  setPageInert(true);
+  const first = box.querySelector('[autofocus]') || box.querySelector('input, select, textarea, button');
+  (first || box).focus();
 }
-function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
+
+function closeModal() {
+  const ov = document.getElementById('modal-overlay');
+  ov.style.display = 'none';
+  setPageInert(false);
+  const back = _modalOpener && _modalOpener.isConnected && _modalOpener !== document.body
+    ? _modalOpener : document.querySelector('#app h1');
+  _modalOpener = null;
+  back?.focus();
+  if (_confirmResolve) { const r = _confirmResolve; _confirmResolve = null; r(false); }
+}
+
+// In-page confirmation in place of window.confirm(): a real title, a specific action
+// word, and the dialog's focus handling. Resolves true only on the action button;
+// Cancel, Escape and a click on the backdrop resolve false.
+function askConfirm({ title, body = '', yes, danger = false }) {
+  return new Promise(resolve => {
+    showModal(`
+      <h2>${esc(title)}</h2>
+      ${body ? `<p class="modal-text">${esc(body)}</p>` : ''}
+      <div class="btn-group" style="margin-top:1rem">
+        <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-act="confirmYes">${esc(yes)}</button>
+        <button class="btn btn-secondary" data-act="closeModal" autofocus>Cancel</button>
+      </div>`);
+    _confirmResolve = resolve;
+  });
+}
+function confirmYes() {
+  const r = _confirmResolve; _confirmResolve = null;
+  closeModal();
+  r?.(true);
+}
+
+// The open views download the file as soon as it decrypts; say under what name.
+function savedNote(result) { return ` — downloaded as ${result.filename || 'a file'}`; }
 
 function methodIcon(m) {
   return { 'ecdh-p256': '🔑', 'pbkdf2': '💬', 'argon2id': '💬', 'yubikey-prf': '🔐' }[m] || '🗝️';
@@ -69,16 +127,30 @@ function navActive(v) {
 // RENDER DISPATCH
 // ═══════════════════════════════════════════════════════════════════════════
 
+const VIEW_TITLES = {
+  home:     'Cell Format — encrypt any file in your browser',
+  encrypt:  'Encrypt a file — Cell Format',
+  open:     'Open a cell — Cell Format',
+  keychain: 'Keychain — Cell Format',
+  about:    'About — Cell Format',
+};
+let _rendered = false;   // the first render leaves focus where the browser put it
+
 async function render() {
   navActive(_view);
+  document.title = VIEW_TITLES[_view] || 'Cell Format';
   const app = document.getElementById('app');
   if (_view === 'home')     renderHome(app);
   else if (_view === 'encrypt') await renderEncrypt(app);
   else if (_view === 'open')    await renderOpen(app);
   else if (_view === 'keychain') await renderKeychain(app);
   else if (_view === 'about')    renderAbout(app);
+  // After a view change, start keyboard and screen-reader users at its heading.
+  if (_rendered) focusView();
+  _rendered = true;
 }
 function go(v) { _view = v; render(); }
+function focusView() { document.querySelector('#app h1')?.focus(); }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // VIEW: HOME
@@ -87,33 +159,39 @@ function go(v) { _view = v; render(); }
 function renderHome(app) {
   app.innerHTML = `
     <div class="hero">
-      <h1>Cell <span>Format</span></h1>
+      <h1 tabindex="-1">Cell <span>Format</span></h1>
       <p class="hero-sub">Encrypt any file into a self-contained <code>.cell</code> or <code>.celz</code> —
         AES-256-GCM encrypted, zero server dependency, keys stay in your browser.</p>
       <div class="home-actions">
-        <div class="drop-card" id="drop-enc">
-          <div class="drop-icon">🔐</div>
-          <div class="drop-title">Encrypt a file</div>
-          <div class="drop-sub">Drop any file or click to browse</div>
-          <input type="file" id="inp-enc" style="display:none">
-        </div>
-        <div class="drop-card" id="drop-open">
-          <div class="drop-icon">🔓</div>
-          <div class="drop-title">Open a .cell / .celz</div>
-          <div class="drop-sub">Drop an encrypted cell or click to browse</div>
-          <input type="file" id="inp-open" accept=".cell,.celz,.json" style="display:none">
-        </div>
+        <label class="drop-card" id="drop-enc">
+          <span class="drop-icon" aria-hidden="true">🔐</span>
+          <span class="drop-title">Encrypt a file</span>
+          <span class="drop-sub">Drop any file here, or choose one</span>
+          <input type="file" id="inp-enc" class="visually-hidden">
+        </label>
+        <label class="drop-card" id="drop-open">
+          <span class="drop-icon" aria-hidden="true">🔓</span>
+          <span class="drop-title">Open a .cell / .celz</span>
+          <span class="drop-sub">Drop an encrypted cell here, or choose one</span>
+          <input type="file" id="inp-open" class="visually-hidden" accept=".cell,.celz,.json">
+        </label>
       </div>
+      <div id="home-status" class="alert" role="alert" style="display:none;max-width:520px;margin:1.5rem auto 0;text-align:left"></div>
     </div>`;
 
+  // Each card is a <label> around its file input, so a click, or Enter or Space on
+  // the focused input, opens the chooser natively. Only drag and drop is wired here.
   function setupDrop(cardId, inputId, onFile) {
     const card = document.getElementById(cardId);
     const input = document.getElementById(inputId);
-    card.onclick = () => input.click();
     card.ondragover = e => { e.preventDefault(); card.classList.add('drag-over'); };
     card.ondragleave = () => card.classList.remove('drag-over');
-    card.ondrop = e => { e.preventDefault(); card.classList.remove('drag-over'); onFile(e.dataTransfer.files[0]); };
-    input.onchange = () => onFile(input.files[0]);
+    card.ondrop = e => {
+      e.preventDefault(); card.classList.remove('drag-over');
+      const f = e.dataTransfer.files[0];
+      if (f) onFile(f);
+    };
+    input.onchange = () => { if (input.files[0]) onFile(input.files[0]); };
   }
 
   setupDrop('drop-enc', 'inp-enc', file => {
@@ -121,12 +199,13 @@ function renderHome(app) {
   });
 
   setupDrop('drop-open', 'inp-open', async file => {
+    hideAlert('home-status');
     try {
       _openCell = await parseCell(file);
       if (!(_openCell.version || _openCell.cd_version) || !(_openCell.payload || _openCell.encrypted_body))
         throw new Error('Not a valid cell file');
       go('open');
-    } catch (e) { alert('Invalid cell file: ' + e.message); }
+    } catch (e) { showAlert('home-status', `"${file.name}" is not a cell file this page can open (${e.message}).`, 'error'); }
   });
 }
 
@@ -196,10 +275,10 @@ function renderLifetimeOptions() {
   const rel = new Date(Date.now() + 3600000).toISOString().slice(0, 16);
   const opts = {
     flash:    `<p class="hint" style="margin-top:0.25rem">Expires in 1 hour. Marked single-use.</p>`,
-    session:  `<div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.25rem"><input type="number" id="enc-lt-val" min="1" max="168" value="24" style="width:70px"><span style="color:#666;font-size:0.88rem">hours</span></div>`,
-    clinical: `<div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.25rem"><input type="number" id="enc-lt-val" min="1" max="72" value="6" style="width:70px"><span style="color:#666;font-size:0.88rem">months · archived on expiry</span></div>`,
-    record:   `<div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.25rem"><input type="number" id="enc-lt-val" min="1" max="25" value="7" style="width:70px"><span style="color:#666;font-size:0.88rem">years · archived on expiry</span></div>`,
-    timed_release: `<div class="field" style="margin-top:0.25rem"><label style="font-size:0.82rem">Unlock at</label><input type="datetime-local" id="enc-lt-release" value="${rel}" style="width:100%"></div>`,
+    session:  `<div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.25rem"><input type="number" id="enc-lt-val" min="1" max="168" value="24" aria-label="Session length in hours" style="width:70px"><span style="color:#666;font-size:0.88rem">hours</span></div>`,
+    clinical: `<div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.25rem"><input type="number" id="enc-lt-val" min="1" max="72" value="6" aria-label="Retention in months" style="width:70px"><span style="color:#666;font-size:0.88rem">months · archived on expiry</span></div>`,
+    record:   `<div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.25rem"><input type="number" id="enc-lt-val" min="1" max="25" value="7" aria-label="Retention in years" style="width:70px"><span style="color:#666;font-size:0.88rem">years · archived on expiry</span></div>`,
+    timed_release: `<div class="field" style="margin-top:0.25rem"><label for="enc-lt-release" style="font-size:0.82rem">Unlock at</label><input type="datetime-local" id="enc-lt-release" value="${rel}" style="width:100%"></div>`,
     permanent: ``,
   };
   div.innerHTML = opts[type] ?? '';
@@ -214,14 +293,14 @@ async function renderEncrypt(app) {
   app.innerHTML = `
     <div class="page-header">
       <button class="btn btn-secondary btn-sm" data-act="go" data-a="home">← Back</button>
-      <h2>Encrypt file</h2>
+      <h1 tabindex="-1">Encrypt a file</h1>
     </div>
     <div class="two-col">
       <div>
         <div class="card">
-          <h3>File</h3>
+          <h2>File</h2>
           <div class="file-info">
-            <div class="file-icon">${fileIcon(_encFile.type)}</div>
+            <div class="file-icon" aria-hidden="true">${fileIcon(_encFile.type)}</div>
             <div>
               <div class="file-name">${esc(_encFile.name)}</div>
               <div class="file-meta">${fmtBytes(_encFile.size)} · ${esc(_encFile.type || 'unknown type')}</div>
@@ -230,7 +309,7 @@ async function renderEncrypt(app) {
         </div>
 
         <div class="card">
-          <h3>Recipients <span class="count-badge" id="rec-count">0</span></h3>
+          <h2>Recipients <span class="count-badge" id="rec-count">0</span></h2>
           <p class="hint" style="margin-bottom:1rem">Anyone with a matching key can decrypt this cell.</p>
           <div id="rec-list"></div>
           <div class="btn-group" style="margin-top:1rem">
@@ -244,9 +323,9 @@ async function renderEncrypt(app) {
 
       <div>
         <div class="card">
-          <h3>Options</h3>
+          <h2>Options</h2>
           <div class="field">
-            <label>Lifetime</label>
+            <label for="enc-lifetime-type">Lifetime</label>
             <select id="enc-lifetime-type" data-change="renderLifetimeOptions">
               <option value="permanent">Permanent — no expiry</option>
               <option value="flash">Flash — single use, &lt;1 hour</option>
@@ -258,15 +337,15 @@ async function renderEncrypt(app) {
             <div id="enc-lifetime-opts"></div>
           </div>
           <div class="field">
-            <label>Quorum threshold</label>
+            <label for="enc-thresh">Quorum threshold</label>
             <div style="display:flex;align-items:center;gap:0.5rem">
-              <input type="number" id="enc-thresh" min="1" max="1" value="1" style="width:64px">
+              <input type="number" id="enc-thresh" min="1" max="1" value="1" aria-describedby="enc-thresh-of" style="width:72px">
               <span id="enc-thresh-of" style="color:#666;font-size:0.88rem">of 0 recipients</span>
             </div>
             <p class="hint" style="margin-top:0.25rem">1 = standard. &gt;1 requires M keys simultaneously.</p>
           </div>
           <div class="field">
-            <label>Sign as (optional)</label>
+            <label for="enc-signer">Sign as (optional)</label>
             <select id="enc-signer">
               <option value="">— Unsigned —</option>
               ${signerKeys.map(k => `<option value="${k.keyId}">${esc(k.label)} · ${k.fingerprint}</option>`).join('')}
@@ -274,7 +353,7 @@ async function renderEncrypt(app) {
             <p class="hint" style="margin-top:0.25rem">ECDSA, sealed inside the encryption: only a recipient can see who signed, and the signature covers the content and the intended recipients.</p>
           </div>
           <div class="field">
-            <label>Copy protection</label>
+            <label for="enc-copy-prot">Copy protection</label>
             <select id="enc-copy-prot">
               <option value="none">None</option>
               <option value="standard" selected>Standard</option>
@@ -282,29 +361,29 @@ async function renderEncrypt(app) {
             </select>
           </div>
           <div class="field">
-            <label>Watermark mode</label>
+            <label for="enc-watermark">Watermark mode</label>
             <select id="enc-watermark">
               <option value="none" selected>None</option>
               <option value="basic">Basic — recipient identity</option>
               <option value="full">Full — forensic</option>
             </select>
           </div>
-          <div class="field">
-            <label>Output format</label>
-          </div>
-          <div class="format-toggle">
-            <input type="radio" name="fmt" id="fmt-cell" value="cell" checked>
-            <label for="fmt-cell">.cell (JSON)</label>
-            <input type="radio" name="fmt" id="fmt-celz" value="celz">
-            <label for="fmt-celz">.celz (gzip)</label>
-          </div>
+          <fieldset class="field">
+            <legend>Output format</legend>
+            <div class="format-toggle">
+              <input type="radio" name="fmt" id="fmt-cell" value="cell" checked>
+              <label for="fmt-cell">.cell (JSON)</label>
+              <input type="radio" name="fmt" id="fmt-celz" value="celz">
+              <label for="fmt-celz">.celz (gzip)</label>
+            </div>
+          </fieldset>
           <p class="hint"><strong>.cell</strong> — human-readable JSON, inspect in any text editor.<br>
           <strong>.celz</strong> — gzip-compressed .cell, ~30% smaller, binary.</p>
         </div>
 
         <div class="card">
           ${_prevHash ? `<div class="alert alert-info" style="display:block;margin-bottom:1rem">🔄 <strong>Mitosis</strong> — linked to previous cell.<br><span style="font-family:monospace;font-size:0.78rem">prev_hash: ${esc(_prevHash.slice(0,24))}…</span></div>` : ''}
-          <div id="enc-status" class="alert" style="display:none"></div>
+          <div id="enc-status" class="alert" role="status" style="display:none"></div>
           <button class="btn btn-primary btn-block" id="btn-encrypt" data-act="doEncrypt">🔐 Encrypt &amp; Download</button>
           <p class="hint" style="text-align:center;margin-top:0.75rem">Share the output file any way you like — it is fully self-contained.</p>
         </div>
@@ -327,16 +406,16 @@ function renderRecList() {
   }
   if (!list) return;
   if (!n) {
-    list.innerHTML = '<p style="color:#aaa;font-size:0.85rem">No recipients yet.</p>'; return;
+    list.innerHTML = '<p style="color:#6b7280;font-size:0.85rem">No recipients yet.</p>'; return;
   }
   list.innerHTML = _encRecipients.map((r, i) => `
     <div class="recipient-row">
-      <span class="recipient-icon">${methodIcon(r.method)}</span>
+      <span class="recipient-icon" aria-hidden="true">${methodIcon(r.method)}</span>
       <div style="flex:1">
         <div style="font-weight:600;font-size:0.9rem">${esc(r.label)}</div>
-        <div style="font-size:0.75rem;color:#888;font-family:monospace">${esc(methodLabel(r.method))}${r.fingerprint ? ' · ' + esc(r.fingerprint) : ''}</div>
+        <div style="font-size:0.75rem;color:#5f6368;font-family:monospace">${esc(methodLabel(r.method))}${r.fingerprint ? ' · ' + esc(r.fingerprint) : ''}</div>
       </div>
-      <button class="btn-icon" data-act="encRemove" data-a="${i}">✕</button>
+      <button class="btn-icon" data-act="encRemove" data-a="${i}" aria-label="Remove ${esc(r.label)}">✕</button>
     </div>`).join('');
 }
 
@@ -350,16 +429,16 @@ async function encAddFromKeychain() {
     ...contacts.map(c => ({ ...c, _src: 'contact' })),
   ];
   showModal(`
-    <h3>Add recipient</h3>
+    <h2>Add recipient</h2>
     ${allRows.length ? `<div class="modal-list">
       ${allRows.map(k => `
-        <div class="modal-key-row" data-act="encSelectKey" data-a="${esc(k.keyId)}" data-b="${esc(k._src)}">
+        <button type="button" class="modal-key-row" data-act="encSelectKey" data-a="${esc(k.keyId)}" data-b="${esc(k._src)}">
           ${methodIcon(k.method)} <strong>${esc(k.label)}</strong>
-          <span style="font-size:0.75rem;color:#888"> · <code>${esc(k.fingerprint)}</code></span>
-          ${k._src === 'contact' ? '<span style="font-size:0.72rem;color:#1565c0;margin-left:4px">contact</span>' : ''}
+          <span style="font-size:0.75rem;color:#5f6368"> · <code>${esc(k.fingerprint)}</code></span>
+          ${k._src === 'contact' ? '<span style="font-size:0.75rem;color:#1565c0;margin-left:4px">contact</span>' : ''}
           ${!k.spki && k.method === 'ecdh-p256' ? '<span style="color:#c62828;font-size:0.75rem"> (no public key)</span>' : ''}
-        </div>`).join('')}
-    </div>` : `<p style="color:#aaa;font-size:0.9rem;margin-bottom:1rem">No keys yet.</p>`}
+        </button>`).join('')}
+    </div>` : `<p style="color:#6b7280;font-size:0.9rem;margin-bottom:1rem">No keys yet.</p>`}
     <div class="btn-group" style="margin-top:1rem;flex-wrap:wrap">
       <button class="btn btn-primary btn-sm" data-act="encInlineGenKey">+ Generate ECDH key</button>
       <button class="btn btn-secondary btn-sm" data-act="closeModal">Cancel</button>
@@ -368,10 +447,10 @@ async function encAddFromKeychain() {
 
 function encInlineGenKey() {
   showModal(`
-    <h3>Generate ECDH P-256 key</h3>
+    <h2>Generate ECDH P-256 key</h2>
     <p class="hint" style="margin-bottom:1rem">Creates a new key in your keychain and adds it as a recipient.</p>
-    <div class="field"><label>Label</label><input id="ig-lbl" placeholder="e.g. My Key" style="width:100%" autofocus></div>
-    <div id="ig-err" class="alert alert-error" style="display:none"></div>
+    <div class="field"><label for="ig-lbl">Label</label><input id="ig-lbl" placeholder="e.g. My Key" style="width:100%" autofocus></div>
+    <div id="ig-err" class="alert alert-error" role="alert" style="display:none"></div>
     <div class="btn-group" style="margin-top:1rem">
       <button class="btn btn-primary" data-act="encInlineGenConfirm">Generate &amp; add</button>
       <button class="btn btn-secondary" data-act="encAddFromKeychain">Back</button>
@@ -406,11 +485,11 @@ async function encSelectKey(keyId, src) {
 
 function encAddPassphrase() {
   showModal(`
-    <h3>Passphrase recipient</h3>
-    <div class="field"><label>Label</label><input id="mp-lbl" placeholder="e.g. My passphrase" style="width:100%"></div>
-    <div class="field"><label>Passphrase</label><input type="password" id="mp-p1" style="width:100%" autofocus></div>
-    <div class="field"><label>Confirm</label><input type="password" id="mp-p2" style="width:100%"></div>
-    <div id="mp-err" class="alert alert-error" style="display:none"></div>
+    <h2>Passphrase recipient</h2>
+    <div class="field"><label for="mp-lbl">Label</label><input id="mp-lbl" placeholder="e.g. My passphrase" style="width:100%"></div>
+    <div class="field"><label for="mp-p1">Passphrase</label><input type="password" id="mp-p1" autocomplete="off" style="width:100%" autofocus></div>
+    <div class="field"><label for="mp-p2">Confirm passphrase</label><input type="password" id="mp-p2" autocomplete="off" style="width:100%"></div>
+    <div id="mp-err" class="alert alert-error" role="alert" style="display:none"></div>
     <div class="btn-group" style="margin-top:1rem">
       <button class="btn btn-primary" data-act="encConfirmPass">Add</button>
       <button class="btn btn-secondary" data-act="closeModal">Cancel</button>
@@ -432,24 +511,29 @@ function encConfirmPass() {
 async function encAddYubikey() {
   const keys = (await kcAll()).filter(k => k.method === 'yubikey-prf');
   if (!keys.length) {
-    if (!confirm('No YubiKey registered. Register one now?\n(Key must be present for both encryption and decryption.)')) return;
-    await kcAddYubikey(); return;
+    const ok = await askConfirm({
+      title: 'Register a YubiKey?',
+      body: 'No YubiKey is registered in this browser yet. The key must be present both to encrypt and to open.',
+      yes: 'Register a YubiKey',
+    });
+    if (ok) await kcAddYubikey();
+    return;
   }
   showYubikeyPicker(keys);
 }
 
 function showYubikeyPicker(keys) {
   showModal(`
-    <h3>YubiKey keys</h3>
+    <h2>YubiKey keys</h2>
     <div class="modal-list" id="yk-picker-list">
       ${keys.map(k => `
-        <div class="modal-key-row" style="justify-content:space-between">
-          <span data-act="encSelectKeyClose" data-a="${esc(k.keyId)}" style="flex:1;cursor:pointer">
+        <div class="modal-key-split">
+          <button type="button" class="modal-key-row" data-act="encSelectKeyClose" data-a="${esc(k.keyId)}">
             🔐 <strong>${esc(k.label)}</strong>
-            <span style="font-size:0.75rem;color:#888"> · <code>${esc(k.fingerprint)}</code></span>
-          </span>
-          <button class="btn btn-danger btn-sm" style="margin-left:0.75rem;flex-shrink:0"
-            data-act="ykPickerRemove" data-a="${esc(k.keyId)}">Remove</button>
+            <span style="font-size:0.75rem;color:#5f6368"> · <code>${esc(k.fingerprint)}</code></span>
+          </button>
+          <button class="btn btn-danger btn-sm" style="flex-shrink:0"
+            data-act="ykPickerRemove" data-a="${esc(k.keyId)}" aria-label="Remove ${esc(k.label)}">Remove</button>
         </div>`).join('')}
     </div>
     <div class="btn-group" style="margin-top:1rem">
@@ -461,7 +545,12 @@ function showYubikeyPicker(keys) {
 async function ykPickerRemove(keyId) {
   const k = await kcGet(keyId);
   if (!k) return;
-  if (!confirm(`Remove "${k.label}" from this device?\n\nThe credential stays on your YubiKey. You can re-register it at any time.`)) return;
+  const ok = await askConfirm({
+    title: `Remove "${k.label}" from this browser?`,
+    body: 'The credential stays on your YubiKey. You can register it again at any time.',
+    yes: 'Remove', danger: true,
+  });
+  if (!ok) { showYubikeyPicker((await kcAll()).filter(r => r.method === 'yubikey-prf')); return; }
   await kcDel(keyId);
   const remaining = (await kcAll()).filter(k => k.method === 'yubikey-prf');
   if (!remaining.length) { closeModal(); return; }
@@ -470,13 +559,13 @@ async function ykPickerRemove(keyId) {
 
 function encAddPubkeyPaste() {
   showModal(`
-    <h3>Paste public key</h3>
+    <h2>Paste public key</h2>
     <p class="hint" style="margin-bottom:1rem">Paste a .cdpub JSON (from someone's exported public key) to encrypt a cell they can open.</p>
-    <div class="field"><label>Label</label><input id="mpk-lbl" placeholder="e.g. Alice" style="width:100%"></div>
-    <div class="field"><label>Public key (JSON or raw SPKI base64)</label>
-      <textarea id="mpk-data" rows="5" placeholder='{"cd_pubkey":"2.0","spki":"..."}' style="width:100%;font-family:monospace;font-size:0.75rem"></textarea>
+    <div class="field"><label for="mpk-lbl">Label</label><input id="mpk-lbl" placeholder="e.g. Alice" style="width:100%"></div>
+    <div class="field"><label for="mpk-data">Public key (.cdpub JSON)</label>
+      <textarea id="mpk-data" class="mono-input" rows="5" placeholder='{"cd_pubkey":"2.0","spki":"..."}' style="width:100%"></textarea>
     </div>
-    <div id="mpk-err" class="alert alert-error" style="display:none"></div>
+    <div id="mpk-err" class="alert alert-error" role="alert" style="display:none"></div>
     <div class="btn-group" style="margin-top:1rem">
       <button class="btn btn-primary" data-act="encConfirmPubkey">Add</button>
       <button class="btn btn-secondary" data-act="closeModal">Cancel</button>
@@ -553,16 +642,16 @@ async function renderOpen(app) {
   app.innerHTML = `
     <div class="page-header">
       <button class="btn btn-secondary btn-sm" data-act="go" data-a="home">← Back</button>
-      <h2>Open cell</h2>
+      <h1 tabindex="-1">Open a cell</h1>
     </div>
     <div class="two-col">
       <div>
         <div class="card">
-          <h3>Cell metadata</h3>
+          <h2>Cell metadata</h2>
           <table class="meta-table">
-            <tr><td>File</td><td><strong>${isLegacy && c.original_filename ? esc(c.original_filename) : '<span style="color:#aaa;font-style:italic">🔒 encrypted</span>'}</strong></td></tr>
-            <tr><td>Type</td><td>${isLegacy && c.content_type ? esc(c.content_type) : '<span style="color:#aaa;font-style:italic">🔒 encrypted</span>'}</td></tr>
-            <tr><td>Size</td><td>${isLegacy && c.original_size ? esc(fmtBytes(Number(c.original_size))) : '<span style="color:#aaa;font-style:italic">🔒 encrypted</span>'}</td></tr>
+            <tr><td>File</td><td><strong>${isLegacy && c.original_filename ? esc(c.original_filename) : '<span style="color:#6b7280;font-style:italic">🔒 encrypted</span>'}</strong></td></tr>
+            <tr><td>Type</td><td>${isLegacy && c.content_type ? esc(c.content_type) : '<span style="color:#6b7280;font-style:italic">🔒 encrypted</span>'}</td></tr>
+            <tr><td>Size</td><td>${isLegacy && c.original_size ? esc(fmtBytes(Number(c.original_size))) : '<span style="color:#6b7280;font-style:italic">🔒 encrypted</span>'}</td></tr>
             <tr><td>Lifetime</td><td>${formatLifetime(c.header?.lifetime)}</td></tr>
             <tr><td>Encryption</td><td>${esc(c.payload?.alg || c.encrypted_body?.alg || 'AES-256-GCM')}</td></tr>
             <tr><td>Created</td><td>${c.created_at ? fmtDate(c.created_at) : '—'}</td></tr>
@@ -571,21 +660,21 @@ async function renderOpen(app) {
             ${policy?.watermark_mode && policy.watermark_mode !== 'none' ? `<tr><td>Watermark</td><td>${esc(policy.watermark_mode)}</td></tr>` : ''}
             ${policy?.created_on_origin ? `<tr><td>Origin</td><td style="font-size:0.8rem">${esc(policy.created_on_origin)}</td></tr>` : ''}
             <tr><td>Integrity</td><td>${c.header_hash ? '✅ hash chain' : '⚠️ no hash (legacy)'}</td></tr>
-            <tr><td>Signed by</td><td>${c.header_sig ? `<span style="font-family:monospace;font-size:0.78rem">${esc(c.header_sig_by || '?')}</span>` : (c.version === '1.4' ? '<span style="color:#aaa;font-style:italic">🔒 inside the ciphertext, if signed</span>' : '—')}</td></tr>
-            ${c.header?.prev_hash ? `<tr><td>Prev cell</td><td style="font-family:monospace;font-size:0.72rem" title="${esc(c.header.prev_hash)}">🔗 ${esc(String(c.header.prev_hash).slice(0,24))}…</td></tr>` : ''}
-            <tr><td>Doc ID</td><td style="font-family:monospace;font-size:0.72rem">${esc(docId.slice(0,18))}…</td></tr>
+            <tr><td>Signed by</td><td>${c.header_sig ? `<span style="font-family:monospace;font-size:0.78rem">${esc(c.header_sig_by || '?')}</span>` : (c.version === '1.4' ? '<span style="color:#6b7280;font-style:italic">🔒 inside the ciphertext, if signed</span>' : '—')}</td></tr>
+            ${c.header?.prev_hash ? `<tr><td>Prev cell</td><td style="font-family:monospace;font-size:0.75rem" title="${esc(c.header.prev_hash)}">🔗 ${esc(String(c.header.prev_hash).slice(0,24))}…</td></tr>` : ''}
+            <tr><td>Doc ID</td><td style="font-family:monospace;font-size:0.75rem">${esc(docId.slice(0,18))}…</td></tr>
             <tr><td>Version</td><td>${esc(c.version || c.cd_version || '—')}</td></tr>
           </table>
         </div>
 
         <div class="card">
-          <h3>Access map (${accessMap.length})</h3>
+          <h2>Access map (${accessMap.length})</h2>
           ${accessMap.map(r => `
             <div class="recipient-row">
-              <span class="recipient-icon">${methodIcon(r.method)}</span>
+              <span class="recipient-icon" aria-hidden="true">${methodIcon(r.method)}</span>
               <div>
                 <div style="font-weight:600;font-size:0.9rem">${esc(r.label || methodLabel(r.method))}</div>
-                <div style="font-size:0.75rem;color:#888;font-family:monospace">${r.fingerprint ? esc(methodLabel(r.method)) + ' · ' + esc(r.fingerprint) : 'no fingerprint, no label — found by trial decryption'}${Number.isInteger(r.share_index) ? ' · share #' + r.share_index : ''}</div>
+                <div style="font-size:0.75rem;color:#5f6368;font-family:monospace">${r.fingerprint ? esc(methodLabel(r.method)) + ' · ' + esc(r.fingerprint) : 'no fingerprint, no label — found by trial decryption'}${Number.isInteger(r.share_index) ? ' · share #' + r.share_index : ''}</div>
               </div>
             </div>`).join('')}
         </div>
@@ -593,12 +682,12 @@ async function renderOpen(app) {
 
       <div>
         <div class="card">
-          <h3>Decrypt</h3>
+          <h2>Decrypt</h2>
           ${isLegacy ? `<div class="alert" style="display:block;margin-bottom:1rem;background:#fff8e1;border-color:#f9a825;color:#5d4037">⚠️ Legacy format (${esc(fmtVersion)}) — decryption supported but re-encrypt to upgrade.</div>` : ''}
           ${!isLegacy && !SUPPORTED_VERSIONS.has(fmtVersion) ? `<div class="alert alert-error" style="display:block;margin-bottom:1rem">Unknown format version "${esc(fmtVersion)}" — this cell may not decrypt correctly.</div>` : ''}
           ${policy?.copy_protection === 'strict' ? `<div class="alert" style="display:block;margin-bottom:1rem;background:#fff3e0;border-color:#e65100;color:#bf360c">🔒 Strict copy protection — authorized recipients only. Do not redistribute.</div>` : ''}
           ${threshold > 1 ? `<div class="alert alert-info" style="display:block;margin-bottom:1rem">Quorum: provide ${threshold} of ${accessMap.length} keys to open.</div>` : ''}
-          <div id="open-status" class="alert" style="display:none"></div>
+          <div id="open-status" class="alert" role="status" style="display:none"></div>
           <div class="btn-group-vert">
             <button class="btn btn-primary" data-act="openWithKeychain">🔑 Use keychain key</button>
             <button class="btn btn-secondary" data-act="openWithPassphrase">💬 Enter passphrase</button>
@@ -650,7 +739,7 @@ async function openWithKeychain() {
       return null;
     });
     const sigNote = await sigNoteFor(result);
-    showAlert('open-status', `✅ Decrypted with "${result.usedRecipient?.label || usedKey?.label || 'keychain key'}"${sigNote}`, 'success');
+    showAlert('open-status', `✅ Decrypted with "${result.usedRecipient?.label || usedKey?.label || 'keychain key'}"${sigNote}${savedNote(result)}`, 'success');
     dlBytes(result.bytes, result.filename, result.contentType);
     _showReencrypt(result);
   } catch (e) { showAlert('open-status', '❌ ' + e.message, 'error'); }
@@ -660,10 +749,10 @@ let _passOpen = null;  // AbortController of the passphrase open in progress
 
 function openWithPassphrase() {
   showModal(`
-    <h3>Enter passphrase</h3>
-    <div class="field"><input type="password" id="odec-pass" placeholder="Passphrase" style="width:100%" autofocus></div>
+    <h2>Enter passphrase</h2>
+    <div class="field"><label for="odec-pass">Passphrase</label><input type="password" id="odec-pass" autocomplete="off" style="width:100%" autofocus></div>
     <p id="odec-progress" class="hint" style="display:none" aria-live="polite"></p>
-    <div id="odec-err" class="alert alert-error" style="display:none"></div>
+    <div id="odec-err" class="alert alert-error" role="alert" style="display:none"></div>
     <div class="btn-group" style="margin-top:0.75rem">
       <button class="btn btn-primary" id="odec-go" data-act="openConfirmPass">Decrypt</button>
       <button class="btn btn-secondary" data-act="cancelPassOpen">Cancel</button>
@@ -708,7 +797,7 @@ async function openConfirmPass() {
     if (ac.signal.aborted) return;
     closeModal();
     const sigNote = await sigNoteFor(result);
-    showAlert('open-status', `✅ Decrypted successfully${sigNote}`, 'success');
+    showAlert('open-status', `✅ Decrypted with the passphrase${sigNote}${savedNote(result)}`, 'success');
     dlBytes(result.bytes, result.filename, result.contentType);
     _showReencrypt(result);
   } catch (e) {
@@ -730,7 +819,7 @@ async function openWithYubikey() {
       return prfUnwrapCek(r.wrapped_cek);
     });
     const sigNote = await sigNoteFor(result);
-    showAlert('open-status', `✅ Decrypted with YubiKey${sigNote}`, 'success');
+    showAlert('open-status', `✅ Decrypted with YubiKey${sigNote}${savedNote(result)}`, 'success');
     dlBytes(result.bytes, result.filename, result.contentType);
     _showReencrypt(result);
   } catch (e) { showAlert('open-status','❌ YubiKey: ' + e.message,'error'); }
@@ -738,10 +827,10 @@ async function openWithYubikey() {
 
 function openWithKeyFile() {
   showModal(`
-    <h3>Use key file</h3>
+    <h2>Use key file</h2>
     <p class="hint" style="margin-bottom:1rem">Select a <strong>.cdkey</strong> (exported from keychain) or a PKCS8 <strong>.pem</strong> private key. Used only in memory — never saved to this browser.</p>
-    <input type="file" id="okf-inp" accept=".cdkey,.pem,.json">
-    <div id="okf-err" class="alert alert-error" style="display:none;margin-top:0.75rem"></div>
+    <div class="field"><label for="okf-inp">Key file</label><input type="file" id="okf-inp" accept=".cdkey,.pem,.json"></div>
+    <div id="okf-err" class="alert alert-error" role="alert" style="display:none;margin-top:0.75rem"></div>
     <div class="btn-group" style="margin-top:1rem">
       <button class="btn btn-primary" data-act="openConfirmKeyFile">Decrypt</button>
       <button class="btn btn-secondary" data-act="closeModal">Cancel</button>
@@ -777,7 +866,7 @@ async function openConfirmKeyFile() {
     });
     closeModal();
     const sigNote = await sigNoteFor(result);
-    showAlert('open-status', `✅ Decrypted with "${label}"${sigNote}`, 'success');
+    showAlert('open-status', `✅ Decrypted with "${label}"${sigNote}${savedNote(result)}`, 'success');
     dlBytes(result.bytes, result.filename, result.contentType);
     _showReencrypt(result);
   } catch (e) { err.textContent='Failed: ' + e.message; err.style.display='block'; }
@@ -815,9 +904,10 @@ async function renderKeychain(app) {
   const contacts = lsPubContacts(keys);
   app.innerHTML = `
     <div class="page-header">
-      <h2>Keychain</h2>
+      <h1 tabindex="-1">Keychain</h1>
     </div>
     <div class="card" style="margin-bottom:1.5rem">
+      <h2 class="visually-hidden">Your keys</h2>
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:1rem;margin-bottom:1.25rem">
         <div>
           <p class="hint" style="max-width:480px;margin-bottom:0.25rem">Private keys are stored in IndexedDB. Public key metadata is also mirrored to <strong>localStorage</strong> so your fingerprints survive an IDB clear.</p>
@@ -830,7 +920,7 @@ async function renderKeychain(app) {
         </div>
       </div>
       ${keys.length === 0 ? `
-        <div style="text-align:center;padding:2.5rem;color:#aaa">
+        <div style="text-align:center;padding:2.5rem;color:#6b7280">
           <div style="font-size:2rem;margin-bottom:0.75rem">🔑</div>
           No keys yet. Generate an ECDH key to get started.
         </div>` : `
@@ -839,48 +929,48 @@ async function renderKeychain(app) {
             <span style="font-size:1.5rem;flex-shrink:0">${methodIcon(k.method)}</span>
             <div style="flex:1;min-width:0">
               <div style="font-weight:600">${esc(k.label)}</div>
-              <div style="font-size:0.78rem;color:#888">
+              <div style="font-size:0.78rem;color:#5f6368">
                 ${esc(methodLabel(k.method))} ·
                 <span style="font-family:monospace">${esc(k.fingerprint)}</span>
-                ${k.method === 'yubikey-prf' ? ' · <span style="color:#1565c0">WebAuthn credential</span>' : k.pkcs8 ? ' · <span style="color:#2e7d32">has private key</span>' : ' · <span style="color:#888">public key only</span>'}
+                ${k.method === 'yubikey-prf' ? ' · <span style="color:#1565c0">WebAuthn credential</span>' : k.pkcs8 ? ' · <span style="color:#2e7d32">has private key</span>' : ' · <span style="color:#5f6368">public key only</span>'}
                 ${lsPubAll().find(r => r.keyId === k.keyId) ? ' · <span style="color:#1565c0" title="Public key mirrored to localStorage">📋 in localStorage</span>' : ''}
                 · added ${k.created_at ? fmtDate(k.created_at) : '?'}
               </div>
             </div>
             <div class="btn-group">
-              ${k.spki ? `<button class="btn btn-secondary btn-sm" data-act="kcSharePub" data-a="${esc(k.keyId)}">Share pubkey</button>` : ''}
-              ${k.pkcs8 ? `<button class="btn btn-secondary btn-sm" data-act="kcExportKey" data-a="${esc(k.keyId)}">Export .cdkey</button>` : ''}
-              <button class="btn btn-danger btn-sm" data-act="kcDeleteKey" data-a="${esc(k.keyId)}">Delete</button>
+              ${k.spki ? `<button class="btn btn-secondary btn-sm" data-act="kcSharePub" data-a="${esc(k.keyId)}" aria-label="Share pubkey for ${esc(k.label)}">Share pubkey</button>` : ''}
+              ${k.pkcs8 ? `<button class="btn btn-secondary btn-sm" data-act="kcExportKey" data-a="${esc(k.keyId)}" aria-label="Export .cdkey for ${esc(k.label)}">Export .cdkey</button>` : ''}
+              <button class="btn btn-danger btn-sm" data-act="kcDeleteKey" data-a="${esc(k.keyId)}" aria-label="Delete ${esc(k.label)}">Delete</button>
             </div>
           </div>`).join('')}
         </div>`}
     </div>
 
     <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:0.75rem;margin-bottom:1rem">
         <div>
-          <strong>Saved contacts</strong>
+          <h2 style="margin-bottom:0">Saved contacts</h2>
           <p class="hint" style="margin:0.25rem 0 0">Public keys stored in localStorage — for encrypting to others. No private key required.</p>
         </div>
         <button class="btn btn-secondary btn-sm" data-act="kcSaveContact">+ Save contact</button>
       </div>
       ${contacts.length === 0 ? `
-        <div style="text-align:center;padding:1.5rem;color:#aaa;font-size:0.9rem">
+        <div style="text-align:center;padding:1.5rem;color:#6b7280;font-size:0.9rem">
           No contacts yet. Paste a .cdpub from someone to add them.
         </div>` : `
         <div>${contacts.map(c => `
           <div class="key-row">
             <span style="font-size:1.5rem;flex-shrink:0">${methodIcon(c.method)}</span>
             <div style="flex:1;min-width:0">
-              <div style="font-weight:600">${esc(c.label)} <span style="font-size:0.72rem;color:#1565c0;font-weight:400">contact</span></div>
-              <div style="font-size:0.78rem;color:#888">
+              <div style="font-weight:600">${esc(c.label)} <span style="font-size:0.75rem;color:#1565c0;font-weight:400">contact</span></div>
+              <div style="font-size:0.78rem;color:#5f6368">
                 ${esc(methodLabel(c.method))} ·
                 <span style="font-family:monospace">${esc(c.fingerprint)}</span>
                 · saved ${c.saved_at ? fmtDate(c.saved_at) : '?'}
               </div>
             </div>
             <div class="btn-group">
-              <button class="btn btn-danger btn-sm" data-act="kcDeleteContact" data-a="${esc(c.keyId)}">Remove</button>
+              <button class="btn btn-danger btn-sm" data-act="kcDeleteContact" data-a="${esc(c.keyId)}" aria-label="Remove ${esc(c.label)}">Remove</button>
             </div>
           </div>`).join('')}
         </div>`}
@@ -889,9 +979,9 @@ async function renderKeychain(app) {
 
 async function kcGenKey() {
   showModal(`
-    <h3>Generate ECDH P-256 key</h3>
-    <div class="field"><label>Label</label><input id="gk-lbl" placeholder="e.g. My Key" style="width:100%" autofocus></div>
-    <div id="gk-err" class="alert alert-error" style="display:none"></div>
+    <h2>Generate ECDH P-256 key</h2>
+    <div class="field"><label for="gk-lbl">Label</label><input id="gk-lbl" placeholder="e.g. My Key" style="width:100%" autofocus></div>
+    <div id="gk-err" class="alert alert-error" role="alert" style="display:none"></div>
     <div class="btn-group" style="margin-top:1rem">
       <button class="btn btn-primary" data-act="kcConfirmGenKey">Generate</button>
       <button class="btn btn-secondary" data-act="closeModal">Cancel</button>
@@ -907,7 +997,7 @@ async function kcConfirmGenKey() {
     const k = await kcGenEcdh(lbl);
     closeModal();
     showModal(`
-      <h3>✅ Key generated</h3>
+      <h2>✅ Key generated</h2>
       <p style="margin-bottom:1rem">Your new ECDH P-256 key "<strong>${esc(k.label)}</strong>" is ready.</p>
       <table class="meta-table" style="margin-bottom:1rem">
         <tr><td>Fingerprint</td><td style="font-family:monospace">${esc(k.fingerprint)}</td></tr>
@@ -926,10 +1016,10 @@ async function kcConfirmGenKey() {
 
 async function kcAddYubikey() {
   showModal(`
-    <h3>Register YubiKey</h3>
+    <h2>Register YubiKey</h2>
     <p class="hint" style="margin-bottom:1rem">Requires HTTPS or localhost and <strong>Chrome or Chromium</strong> (Firefox on Linux does not support YubiKey PRF). Requires a <strong>YubiKey 5 series</strong> (firmware 5.2+) or any FIDO2 key with hmac-secret.<br><span style="color:#c62828">⚠ The Yubico Security Key (solid blue or black, ~$25) does <u>not</u> support PRF — it lacks hmac-secret at the hardware level.</span></p>
-    <div class="field"><label>Label</label><input id="yk-lbl" placeholder="e.g. My YubiKey" style="width:100%" autofocus></div>
-    <div id="yk-err" class="alert alert-error" style="display:none"></div>
+    <div class="field"><label for="yk-lbl">Label</label><input id="yk-lbl" placeholder="e.g. My YubiKey" style="width:100%" autofocus></div>
+    <div id="yk-err" class="alert alert-error" role="alert" style="display:none"></div>
     <div id="yk-info" class="alert alert-info" style="display:none">Touch your YubiKey when it flashes…</div>
     <div class="btn-group" style="margin-top:1rem">
       <button class="btn btn-primary" id="btn-yk-reg" data-act="kcConfirmYubikey">Register</button>
@@ -949,8 +1039,14 @@ async function kcConfirmYubikey() {
     const rec = await registerYubiKey(lbl);
     await kcSave(rec);
     closeModal();
-    alert(`YubiKey "${lbl}" registered.\nFingerprint: ${rec.fingerprint}`);
-    if (_view === 'keychain') renderKeychain(document.getElementById('app'));
+    if (_view === 'keychain') await renderKeychain(document.getElementById('app'));
+    showModal(`
+      <h2>✅ YubiKey registered</h2>
+      <table class="meta-table" style="margin-bottom:1rem">
+        <tr><td>Label</td><td>${esc(lbl)}</td></tr>
+        <tr><td>Fingerprint</td><td style="font-family:monospace">${esc(rec.fingerprint)}</td></tr>
+      </table>
+      <div class="btn-group"><button class="btn btn-primary" data-act="closeModal">Done</button></div>`);
     return rec;
   } catch (e) {
     info.style.display='none';
@@ -964,9 +1060,9 @@ async function kcSharePub(keyId) {
   if (!k || !k.spki) return;
   const json = JSON.stringify({ cd_pubkey: '2.0', label: k.label, fingerprint: k.fingerprint, method: k.method, spki: k.spki }, null, 2);
   showModal(`
-    <h3>Share public key — ${esc(k.label)}</h3>
+    <h2>Share public key — ${esc(k.label)}</h2>
     <p class="hint" style="margin-bottom:0.75rem">Give this to anyone who wants to encrypt a cell you can open.</p>
-    <textarea readonly rows="8" data-act="selectAll" style="width:100%;font-family:monospace;font-size:0.75rem;padding:0.5rem">${esc(json)}</textarea>
+    <textarea readonly rows="8" data-act="selectAll" class="mono-input" aria-label="Public key (.cdpub JSON)" style="width:100%;padding:0.5rem">${esc(json)}</textarea>
     <div class="btn-group" style="margin-top:1rem">
       <button class="btn btn-primary" data-act="dlText" data-a="${esc(json)}" data-b="${esc(k.fingerprint)}.cdpub">⬇ Download .cdpub</button>
       <button class="btn btn-secondary" data-act="copyText" data-a="${esc(json)}">Copy</button>
@@ -977,24 +1073,35 @@ async function kcSharePub(keyId) {
 async function kcExportKey(keyId) {
   const k = await kcGet(keyId);
   if (!k || !k.pkcs8) return;
-  if (!confirm(`Export private key for "${k.label}"?\n\nThis exports your PRIVATE KEY. Store it securely.`)) return;
+  const ok = await askConfirm({
+    title: `Export the private key for "${k.label}"?`,
+    body: 'The file holds your private key: anyone who has it can open every cell sent to this key. Store it somewhere safe.',
+    yes: 'Export .cdkey',
+  });
+  if (!ok) return;
   dlText(JSON.stringify({ cd_key: '2.0', ...k, exported_at: Math.floor(Date.now()/1000) }, null, 2), `${k.fingerprint}.cdkey`);
 }
 
 async function kcDeleteKey(keyId) {
   const k = await kcGet(keyId);
   if (!k) return;
-  if (!confirm(`Delete "${k.label}"?\n\nYou will not be able to decrypt cells encrypted for this key.`)) return;
+  const ok = await askConfirm({
+    title: `Delete "${k.label}"?`,
+    body: 'This browser will no longer be able to open cells encrypted for this key.',
+    yes: 'Delete key', danger: true,
+  });
+  if (!ok) return;
   await kcDel(keyId);
-  renderKeychain(document.getElementById('app'));
+  await renderKeychain(document.getElementById('app'));
+  focusView();
 }
 
 function kcImport() {
   showModal(`
-    <h3>Import key</h3>
+    <h2>Import key</h2>
     <p class="hint" style="margin-bottom:1rem">Import a <strong>.cdkey</strong> (private key) or <strong>.cdpub</strong> (public key only — for encrypting to someone else).</p>
-    <input type="file" id="ki-inp" accept=".cdkey,.cdpub,.json">
-    <div id="ki-err" class="alert alert-error" style="display:none;margin-top:0.75rem"></div>
+    <div class="field"><label for="ki-inp">Key file</label><input type="file" id="ki-inp" accept=".cdkey,.cdpub,.json"></div>
+    <div id="ki-err" class="alert alert-error" role="alert" style="display:none;margin-top:0.75rem"></div>
     <div class="btn-group" style="margin-top:1rem">
       <button class="btn btn-primary" data-act="kcConfirmImport">Import</button>
       <button class="btn btn-secondary" data-act="closeModal">Cancel</button>
@@ -1029,13 +1136,13 @@ async function kcConfirmImport() {
 
 function kcSaveContact() {
   showModal(`
-    <h3>Save contact public key</h3>
+    <h2>Save contact public key</h2>
     <p class="hint" style="margin-bottom:1rem">Paste a <strong>.cdpub</strong> JSON from someone else. Their public key is saved to localStorage so you can encrypt cells for them.</p>
-    <div class="field"><label>Display name (optional override)</label><input id="sc-lbl" placeholder="Leave blank to use name from file" style="width:100%"></div>
-    <div class="field"><label>Public key JSON (.cdpub)</label>
-      <textarea id="sc-data" rows="6" placeholder='{"cd_pubkey":"2.0","label":"Alice","spki":"..."}' style="width:100%;font-family:monospace;font-size:0.75rem" autofocus></textarea>
+    <div class="field"><label for="sc-lbl">Display name (optional override)</label><input id="sc-lbl" placeholder="Leave blank to use name from file" style="width:100%"></div>
+    <div class="field"><label for="sc-data">Public key JSON (.cdpub)</label>
+      <textarea id="sc-data" class="mono-input" rows="6" placeholder='{"cd_pubkey":"2.0","label":"Alice","spki":"..."}' style="width:100%" autofocus></textarea>
     </div>
-    <div id="sc-err" class="alert alert-error" style="display:none"></div>
+    <div id="sc-err" class="alert alert-error" role="alert" style="display:none"></div>
     <div class="btn-group" style="margin-top:1rem">
       <button class="btn btn-primary" data-act="kcConfirmSaveContact">Save</button>
       <button class="btn btn-secondary" data-act="closeModal">Cancel</button>
@@ -1069,12 +1176,18 @@ async function kcConfirmSaveContact() {
   } catch (e) { err.textContent = 'Invalid: ' + e.message; err.style.display = 'block'; }
 }
 
-function kcDeleteContact(keyId) {
+async function kcDeleteContact(keyId) {
   const c = lsPubAll().find(r => r.keyId === keyId);
   if (!c) return;
-  if (!confirm(`Remove contact "${c.label}"?`)) return;
+  const ok = await askConfirm({
+    title: `Remove contact "${c.label}"?`,
+    body: 'You can add them again from their .cdpub file.',
+    yes: 'Remove contact', danger: true,
+  });
+  if (!ok) return;
   lsPubDel(keyId);
-  renderKeychain(document.getElementById('app'));
+  await renderKeychain(document.getElementById('app'));
+  focusView();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1083,12 +1196,12 @@ function kcDeleteContact(keyId) {
 
 function renderAbout(app) {
   app.innerHTML = `
-    <div class="page-header"><h2>About Cell Format</h2></div>
+    <div class="page-header"><h1 tabindex="-1">About Cell Format</h1></div>
     <div class="card" style="max-width:680px">
-      <h3>What is a .cell file?</h3>
+      <h2>What is a .cell file?</h2>
       <p style="margin-bottom:1rem;line-height:1.7">A <strong>.cell</strong> file is a self-contained encrypted envelope. Any file type can be encrypted into one — the original file is gzip-compressed then AES-256-GCM encrypted client-side. The server (if any) stores only ciphertext.</p>
 
-      <h3>File formats</h3>
+      <h2>File formats</h2>
       <table class="meta-table" style="margin-bottom:1.5rem">
         <tr><td><code>.cell</code></td><td>Plain JSON — human-readable structure, inspect in any text editor.</td></tr>
         <tr><td><code>.celz</code></td><td>gzip-compressed JSON — same format, ~30% smaller. Binary.</td></tr>
@@ -1096,7 +1209,7 @@ function renderAbout(app) {
         <tr><td><code>.cdkey</code></td><td>Full key export (private + public) — use on another device. Keep safe.</td></tr>
       </table>
 
-      <h3>Cell envelope (JSON)</h3>
+      <h2>Cell envelope (JSON)</h2>
       <p style="color:#555;font-size:0.88rem;margin-bottom:0.75rem">Filename, MIME type, and size are inside the encrypted payload (spec §5.1) — invisible to any observer, server, or transit node. From v1.4 the access map names no one: an entry has no fingerprint or label, and you find yours by trial decryption (spec §6). A signature, if any, is inside the ciphertext (spec §4.5).</p>
       <pre style="background:#f5f5f5;padding:1rem;border-radius:8px;font-size:0.78rem;overflow-x:auto;margin-bottom:1.5rem">{
   "version": "1.4",
@@ -1124,14 +1237,14 @@ function renderAbout(app) {
   }
 }</pre>
 
-      <h3>Key methods</h3>
+      <h2>Key methods</h2>
       <table class="meta-table" style="margin-bottom:1.5rem">
         <tr><td>🔑 ECDH P-256</td><td>Generate a keypair in the browser. Private key stays in IndexedDB. Share your public key (.cdpub) with others.</td></tr>
         <tr><td>💬 Argon2id</td><td>Derive a key from a passphrase (RFC 9106; 64 MiB, 3 passes, 4 lanes). Share the passphrase out-of-band. Older PBKDF2 cells still open.</td></tr>
         <tr><td>🔐 YubiKey PRF</td><td>FIDO2 PRF extension — the key evaluates a fresh random 32-byte salt for every cell, so each cell has its own 32-byte wrapping key. Requires HTTPS + YubiKey 5 series.</td></tr>
       </table>
 
-      <h3>Crypto stack</h3>
+      <h2>Crypto stack</h2>
       <p style="line-height:1.7;color:#555">Content: <strong>AES-256-GCM</strong> with random 96-bit IV per cell. The format version and the header's advisory metadata (threshold, lifetime, policy, lineage) are bound to the ciphertext as GCM <strong>additional authenticated data</strong> — tampering with them, or relabelling the version, fails the auth tag on open. Integrity hashes and signatures are computed over a <strong>canonical JSON</strong> form, so re-formatting the file (key order, whitespace) does not break verification.
       CEK wrapping: ECDH P-256 ephemeral keypair → <strong>HKDF-SHA256</strong> (256-bit, random 32-byte salt, info <code>cellular-defense-cek-wrap-v1</code>) → <strong>AES-KW</strong>.
       Passphrases: <strong>Argon2id</strong> (RFC 9106, 16-byte salt, NFC-normalised passphrase) → AES-KW; PBKDF2-SHA256 (600,000 iterations) is still accepted on open, up to 10,000,000. Because the header hash is unkeyed, an opener bounds its work: passphrase entries are tried cheapest first, and one open never does more key derivation than a single maximum-parameter entry. A slow open shows progress and can be cancelled.
@@ -1143,11 +1256,11 @@ function renderAbout(app) {
     </div>
 
     <div class="card" style="max-width:680px">
-      <h3>License &amp; Copyright</h3>
+      <h2>License &amp; Copyright</h2>
       <p style="line-height:1.7;margin-bottom:1rem">Copyright &copy; 2026 <strong>Enthropic Data LLC</strong>.</p>
       <p style="line-height:1.7;margin-bottom:1rem;color:#555"><strong>The format</strong> (<code>docs/SPEC.md</code>) is a defensive publication: anyone may implement it, for any purpose, without licence or royalty. No patent is sought or asserted.<br>
       <strong>This code</strong> is licensed under the GNU AGPL-3.0; a commercial licence is available for products that cannot meet its terms. The ports in <code>impl/</code> and the conformance suite are Apache-2.0. See <code>LICENSING.md</code>.</p>
-      <p style="line-height:1.7;color:#555"><strong>Third-party components:</strong> None. Cell Format uses the browser's built-in WebCrypto API (W3C Web Cryptography API, <a href="https://www.w3.org/TR/WebCryptoAPI/" target="_blank" rel="noopener noreferrer">W3C Recommendation</a>) and standard browser APIs. No external libraries are bundled or loaded.</p>
+      <p style="line-height:1.7;color:#555"><strong>Third-party components:</strong> None. Cell Format uses the browser's built-in WebCrypto API (W3C Web Cryptography API, <a href="https://www.w3.org/TR/WebCryptoAPI/" target="_blank" rel="noopener noreferrer">W3C Recommendation<span class="visually-hidden"> (opens in a new tab)</span></a>) and standard browser APIs. No external libraries are bundled or loaded.</p>
     </div>`;
 }
 
@@ -1178,6 +1291,7 @@ const ACTIONS = {
   // no-argument actions
   cancelPassOpen: () => cancelPassOpen(),
   closeModal: () => closeModal(),
+  confirmYes: () => confirmYes(),
   doEncrypt: () => doEncrypt(),
   doMitosis: () => doMitosis(),
   encAddFromKeychain: () => encAddFromKeychain(),
@@ -1215,6 +1329,21 @@ document.addEventListener('change', (e) => {
   if (!el) return;
   const f = Object.prototype.hasOwnProperty.call(CHANGE_ACTIONS, el.dataset.change) ? CHANGE_ACTIONS[el.dataset.change] : null;
   if (f) f(el);
+});
+
+// Dialog keyboard: Escape closes (and stops a passphrase open in progress), Tab and
+// Shift+Tab wrap inside the dialog.
+document.addEventListener('keydown', (e) => {
+  const ov = document.getElementById('modal-overlay');
+  if (!ov || ov.style.display !== 'flex') return;
+  if (e.key === 'Escape') { e.preventDefault(); cancelPassOpen(); return; }
+  if (e.key !== 'Tab') return;
+  const f = [...ov.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])')]
+    .filter(el => el.getClientRects().length);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1], at = document.activeElement;
+  if (e.shiftKey && (at === first || !ov.contains(at))) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && (at === last || !ov.contains(at))) { e.preventDefault(); first.focus(); }
 });
 
 document.addEventListener('DOMContentLoaded', () => {
