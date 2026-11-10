@@ -1,7 +1,11 @@
 # Design note: temporal enforcement — what `lifetime` can and cannot be
 
-**Status as of 2026-08-09.** Recommendations 1–3 **implemented in v1.3**; see
-the closing section. Recommendation 4 (`timed_release`) remains open — and
+**Status as of 2026-11-10.** Recommendations 1–3 **implemented in v1.3**; see
+the closing section. Recommendation 4 is **half done**: the quorum-escrow
+pattern of §4.3 is now a supported method,
+[`docs/methods/escrowed-release.md`](../methods/escrowed-release.md), with the
+enforced alternatives (§4.1, §4.2, a time-gate service, and others) logged
+there as possible extensions. Making the bare field real remains open — and
 `extension-profiles.md` §4 proposes a different shape for it than §4.1 below
 assumes: a beacon-gated *access-map entry* rather than a lifetime field, so
 that quorum supplies the enforcement. Read that before acting on this.

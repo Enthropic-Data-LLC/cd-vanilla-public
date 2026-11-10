@@ -46,6 +46,7 @@ app.js              — the UI code, loaded by index.html (kept out of the page 
 app.css             — the stylesheet
 cell-crypto.js      — the crypto/format library, loaded by index.html
 docs/SPEC.md        — format specification v1.4 (normative)
+docs/methods/       — supported ways to use the format, e.g. escrowed-release.md (no opening before a date)
 docs/defensive-pub/anchors/      — the anchored v1.2, v1.3 and v1.4 bytes + Bitcoin timestamp proofs
 REVIEW.md           — what v1.4 changed and what we most want attacked
 tests/test.html     — browser test suite (loads the library in a page)
