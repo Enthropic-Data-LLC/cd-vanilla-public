@@ -30,8 +30,11 @@ function hideAlert(id) { const el = document.getElementById(id); if (el) el.styl
 // One dialog at a time, in #modal-overlay. While it is open the page behind it is
 // inert, focus starts inside it, Tab stays inside it and Escape closes it (keydown
 // listener under INIT), and closing returns focus to the control that opened it.
+// Closing also stops a passphrase open still running and removes the dialog's markup,
+// so a typed passphrase does not stay behind in a hidden input.
 let _modalOpener = null;
 let _confirmResolve = null;   // pending askConfirm(), resolved false by any close
+let _passOpen = null;         // AbortController of the passphrase open in progress
 
 function setPageInert(on) {
   for (const sel of ['.skip-link', 'nav', '#app', 'footer']) {
@@ -55,9 +58,16 @@ function showModal(html) {
   (first || box).focus();
 }
 
+// Safe to call when no dialog is open: it does nothing, and in particular does not move
+// focus (several paths close twice, and focus would land on the page heading).
+// A passphrase open stops before its next entry; a key derivation already running
+// finishes first, because it runs on the page and cannot be interrupted part-way.
 function closeModal() {
+  if (_passOpen) { _passOpen.abort(); _passOpen = null; }
   const ov = document.getElementById('modal-overlay');
+  if (ov.style.display !== 'flex') return;
   ov.style.display = 'none';
+  ov.innerHTML = '';
   setPageInert(false);
   const back = _modalOpener && _modalOpener.isConnected && _modalOpener !== document.body
     ? _modalOpener : document.querySelector('#app h1');
@@ -745,8 +755,6 @@ async function openWithKeychain() {
   } catch (e) { showAlert('open-status', '❌ ' + e.message, 'error'); }
 }
 
-let _passOpen = null;  // AbortController of the passphrase open in progress
-
 function openWithPassphrase() {
   showModal(`
     <h2>Enter passphrase</h2>
@@ -755,17 +763,10 @@ function openWithPassphrase() {
     <div id="odec-err" class="alert alert-error" role="alert" style="display:none"></div>
     <div class="btn-group" style="margin-top:0.75rem">
       <button class="btn btn-primary" id="odec-go" data-act="openConfirmPass">Decrypt</button>
-      <button class="btn btn-secondary" data-act="cancelPassOpen">Cancel</button>
+      <button class="btn btn-secondary" data-act="closeModal">Cancel</button>
     </div>`);
   setTimeout(() => document.getElementById('odec-pass')?.focus(), 80);
   document.getElementById('odec-pass').onkeydown = e => { if (e.key==='Enter') openConfirmPass(); };
-}
-
-// Stops before the next entry. A derivation already running finishes first:
-// key derivation runs on the page and cannot be interrupted part-way.
-function cancelPassOpen() {
-  _passOpen?.abort();
-  closeModal();
 }
 
 async function openConfirmPass() {
@@ -795,6 +796,7 @@ async function openConfirmPass() {
       },
     });
     if (ac.signal.aborted) return;
+    _passOpen = null;   // finished: closing its dialog now is not a cancel
     closeModal();
     const sigNote = await sigNoteFor(result);
     showAlert('open-status', `✅ Decrypted with the passphrase${sigNote}${savedNote(result)}`, 'success');
@@ -806,7 +808,7 @@ async function openConfirmPass() {
     err.textContent = /not tried/.test(e.message) ? e.message : 'Wrong passphrase or corrupted cell';
     err.style.display = 'block';
   } finally {
-    _passOpen = null;
+    if (_passOpen === ac) _passOpen = null;   // a later open may already own the slot
     go.disabled = false;
   }
 }
@@ -995,7 +997,11 @@ async function kcConfirmGenKey() {
   if (!lbl) { err.textContent='Enter a label'; err.style.display='block'; return; }
   try {
     const k = await kcGenEcdh(lbl);
-    closeModal();
+    // List the new key now, behind the dialog, so it is there however the next dialog
+    // is closed (Done, Escape, the backdrop, Share pubkey). The render replaces the
+    // Generate button that opened this dialog, so hand focus back to the new one.
+    await renderKeychain(document.getElementById('app'));
+    _modalOpener = document.querySelector('#app [data-act="kcGenKey"]') || _modalOpener;
     showModal(`
       <h2>✅ Key generated</h2>
       <p style="margin-bottom:1rem">Your new ECDH P-256 key "<strong>${esc(k.label)}</strong>" is ready.</p>
@@ -1006,7 +1012,7 @@ async function kcConfirmGenKey() {
       <p class="hint" style="margin-bottom:1rem">Share your <strong>public key</strong> with others so they can encrypt cells for you. Export a <strong>.cdkey</strong> to use on another device.</p>
       <div class="btn-group">
         <button class="btn btn-primary" data-act="closeSharePub" data-a="${esc(k.keyId)}">Share pubkey</button>
-        <button class="btn btn-secondary" data-act="closeRenderKeychain">Done</button>
+        <button class="btn btn-secondary" data-act="closeModal">Done</button>
       </div>`);
   } catch (e) {
     document.getElementById('gk-err').textContent = e.message;
@@ -1032,8 +1038,9 @@ async function kcConfirmYubikey() {
   const lbl = document.getElementById('yk-lbl').value.trim();
   const err = document.getElementById('yk-err');
   const info = document.getElementById('yk-info');
+  const btn  = document.getElementById('btn-yk-reg');
   if (!lbl) { err.textContent='Enter a label'; err.style.display='block'; return; }
-  document.getElementById('btn-yk-reg').disabled = true;
+  btn.disabled = true;
   info.style.display='block'; err.style.display='none';
   try {
     const rec = await registerYubiKey(lbl);
@@ -1051,7 +1058,7 @@ async function kcConfirmYubikey() {
   } catch (e) {
     info.style.display='none';
     err.textContent = e.message; err.style.display='block';
-    document.getElementById('btn-yk-reg').disabled = false;
+    btn.disabled = false;
   }
 }
 
@@ -1284,12 +1291,10 @@ const ACTIONS = {
   kcDeleteKey:        el => kcDeleteKey(el.dataset.a),
   kcDeleteContact:    el => kcDeleteContact(el.dataset.a),
   closeSharePub:      el => { closeModal(); kcSharePub(el.dataset.a); },
-  closeRenderKeychain: () => { closeModal(); renderKeychain(document.getElementById('app')); },
   selectAll:          el => el.select(),
   dlText:             el => dlText(el.dataset.a, el.dataset.b),
   copyText:           el => { if (navigator.clipboard) navigator.clipboard.writeText(el.dataset.a).then(() => { el.textContent = 'Copied!'; }, () => { el.textContent = 'Copy failed — select the text and copy it'; }); },
   // no-argument actions
-  cancelPassOpen: () => cancelPassOpen(),
   closeModal: () => closeModal(),
   confirmYes: () => confirmYes(),
   doEncrypt: () => doEncrypt(),
@@ -1336,7 +1341,7 @@ document.addEventListener('change', (e) => {
 document.addEventListener('keydown', (e) => {
   const ov = document.getElementById('modal-overlay');
   if (!ov || ov.style.display !== 'flex') return;
-  if (e.key === 'Escape') { e.preventDefault(); cancelPassOpen(); return; }
+  if (e.key === 'Escape') { e.preventDefault(); closeModal(); return; }
   if (e.key !== 'Tab') return;
   const f = [...ov.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])')]
     .filter(el => el.getClientRects().length);
