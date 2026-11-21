@@ -461,8 +461,18 @@ pub struct VerifyResult {
 /// `header_sig` entirely and the result is indistinguishable from a cell that
 /// was never signed, so pass `expected_signer` (a fingerprint learned out of
 /// band) whenever authorship matters.
+///
+/// A v1.4 signature is inside the ciphertext (§4.5), where no key-less check can
+/// reach it, so `expected_signer` on a v1.4 cell is an error rather than a clean
+/// return that looks as if the requirement was met: use [`open`].
 pub fn verify(cell: &Value, expected_signer: Option<&str>) -> Result<VerifyResult> {
     let version = version_of(cell)?;
+    if let (Some(expected), true) = (expected_signer, INNER_SIG_VERSIONS.contains(&version.as_str())) {
+        return Err(Error::Signature(format!(
+            "a v{version} cell carries its signature inside the ciphertext, so verify cannot \
+             check it against {expected} — use open with expected_signer"
+        )));
+    }
     let header = cell
         .get("header")
         .filter(|v| v.is_object())
@@ -549,8 +559,7 @@ pub fn verify(cell: &Value, expected_signer: Option<&str>) -> Result<VerifyResul
         result.signer_fingerprint = Some(crypto::fingerprint(&spki_der));
     }
 
-    // v1.4 signatures are inside the payload; `open` checks `expected_signer`.
-    if let (Some(expected), false) = (expected_signer, INNER_SIG_VERSIONS.contains(&result.version.as_str())) {
+    if let Some(expected) = expected_signer {
         if !result.signed {
             return Err(Error::Signature(format!(
                 "expected a cell signed by {expected}, but it carries no signature \
@@ -642,8 +651,7 @@ pub fn open(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
 
 fn open_cell(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
     let version = version_of(cell)?;
-    let is_legacy = cell.get("version").and_then(|v| v.as_str()).is_none()
-        && cell.get("cd_version").is_some();
+    let is_legacy = is_legacy_cell(cell);
     let now = opts.now.unwrap_or_else(crate::keys::now);
 
     // Step 0: advisory gates. Cheapest of all, and they need nothing but the clock.
@@ -675,7 +683,13 @@ fn open_cell(cell: &Value, opts: &OpenOptions) -> Result<OpenResult> {
 
     // Steps 1-3: integrity and authenticity, before any key material is touched.
     let verified = if !is_legacy {
-        Some(verify(cell, opts.expected_signer.as_deref())?)
+        // ≤v1.3: the signer is checked here, before any key work (§10). v1.4: it
+        // is inside the ciphertext and is checked once that is decrypted.
+        let signer = opts
+            .expected_signer
+            .as_deref()
+            .filter(|_| !INNER_SIG_VERSIONS.contains(&version.as_str()));
+        Some(verify(cell, signer)?)
     } else {
         if opts.expected_signer.is_some() {
             return Err(Error::Signature(
@@ -1025,15 +1039,31 @@ fn try_unwrap(entry: &Value, opts: &OpenOptions) -> Option<Vec<u8>> {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+/// A pre-spec v2.x cell (§12) is the ONLY kind read without a `version`. Neither
+/// field is authenticated, so the test is exact: a `version` of any other type,
+/// or a `cd_version` that is not 2.x, is refused.
+fn is_legacy_cell(cell: &Value) -> bool {
+    cell.get("version").map_or(true, Value::is_null)
+        && cell
+            .get("cd_version")
+            .and_then(Value::as_str)
+            .and_then(|v| v.strip_prefix("2."))
+            .is_some_and(|minor| !minor.is_empty() && minor.bytes().all(|b| b.is_ascii_digit()))
+}
+
 fn version_of(cell: &Value) -> Result<String> {
-    if let Some(version) = cell.get("version").and_then(|v| v.as_str()) {
-        if !SUPPORTED_VERSIONS.contains(&version) {
-            return Err(Error::UnsupportedVersion(version.to_string()));
-        }
-        return Ok(version.to_string());
+    if is_legacy_cell(cell) {
+        return Ok(cell["cd_version"].as_str().unwrap_or_default().to_string()); // legacy v2.x (§12)
     }
-    if let Some(legacy) = cell.get("cd_version").and_then(|v| v.as_str()) {
-        return Ok(legacy.to_string()); // legacy v2.x (§12)
+    match cell.get("version").filter(|v| !v.is_null()) {
+        Some(Value::String(v)) if SUPPORTED_VERSIONS.contains(&v.as_str()) => Ok(v.clone()),
+        Some(Value::String(v)) => Err(Error::UnsupportedVersion(v.clone())),
+        Some(other) => Err(Error::UnsupportedVersion(other.to_string())),
+        None => Err(Error::UnsupportedVersion(
+            match cell.get("cd_version").filter(|v| !v.is_null()) {
+                Some(cd) => format!("cd_version {cd}, not a legacy (2.x) version, and no version field"),
+                None => "(absent)".into(),
+            },
+        )),
     }
-    Err(Error::UnsupportedVersion("(absent)".into()))
 }

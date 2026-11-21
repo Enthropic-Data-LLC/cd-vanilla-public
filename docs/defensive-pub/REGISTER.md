@@ -148,17 +148,17 @@ public in this repository on 2026-10-31.
 Block 972397: merkle root `3616ab4dc0b58b25a94f7d9d40129b90ea1bcd99284df921b12b1c2d41e1801b`,
 mined 2026-10-21 00:35:33 UTC. Frozen copies and proofs: `docs/defensive-pub/anchors/v1.4/`.
 
-### Live files and their root proofs — updated 2026-11-09
+### Live files and their root proofs — updated 2026-11-21
 
 The `.ots` file beside each live file is the proof for *those* bytes:
 
 | Live file | SHA-256 | Root proof |
 |---|---|---|
 | `docs/SPEC.md` | `35d2883e…300974f8` | the v1.4 proof above — the file is byte-identical to `anchors/v1.4/SPEC.md` |
-| `cell-crypto.js` | `5864678503eee949ed28f5a4d88b87894a10702d2c46d0d2da32ed4a79661793` | stamped 2026-11-09 — **pending**; no block is claimed until `ots upgrade` confirms one |
+| `cell-crypto.js` | `d541d1b1ac96f77d271f410b46555dcc09d88ac81482f615ab9acd91f90351d2` | stamped 2026-11-20 — **Bitcoin-confirmed** (976803, 976809, 976843; each merkle root compared with a block explorer) |
 | `docs/DEFENSIVE-PUBLISHING-GUIDE.md` | `6d97cc4e…7dd95ee0` | the v1.2 proof |
 
-`cell-crypto.js` is v1.4 plus five implementation hardenings, and is **no longer
+`cell-crypto.js` is v1.4 plus six implementation hardenings, and is **no longer
 byte-identical to the v1.4 anchor**. First, 2026-10-31: an opener refuses a PBKDF2 entry whose
 iteration count exceeds 10,000,000 instead of deriving with it. The count is read
 from the file and `header_hash` is unkeyed, so before this an edited entry could
@@ -230,11 +230,38 @@ overwrite an existing file, strip a leading dot and control or bidi characters
 from the name a cell asks for, print the signer before any text the sender
 chose, and escape that text.
 
+Sixth hardening, 2026-11-20 (code review of the same day): three changes. First,
+a cell is legacy only when it has no `version` and its `cd_version` is `2.x`. The
+test had been "no `version`, any `cd_version`", so a signed v1.4 cell with
+`version` deleted and `cd_version: "1.4"` added still decrypted under its real
+v1.4 AAD and then took the legacy path: no `header_hash`, `payload_hash` or
+sender-signature check, with the filename and media type taken from edited
+top-level fields. Second, the writer signs exactly the manifest it stores, so a
+`meta` holding a `Date` or a function no longer seals a cell that fails its own
+signature check. Third, a sender record with a signing key but no `spki` is
+refused at sealing instead of producing a cell every recipient rejects. No format
+change. The only cells refused that opened before have no `version` and a
+`cd_version` other than `2.x`, or a `version` that is not a supported string;
+nothing here has ever written one.
+
+The same day, in the ports. The relabelled cell was not exploitable in Python,
+Go, Rust or Java, which decrypt a legacy cell with no AAD, so its tag fails; all
+four now apply the same exact test. In Go, Rust and Java a `version` of the wrong
+JSON type had counted as absent, so a v2.0 cell with `version: 2` added still
+opened. `verify` with an expected signer on a v1.4 cell returned a clean result
+in all four libraries, and `cdcell verify --expect-signer` exited 0 in Go, Rust
+and Java, although that signature is inside the ciphertext and `verify` cannot
+see it. It is now an error; `open` still checks the signer. The demo and all four
+command-line tools now say when a signed v1.4 cell was opened by a key the signer
+did not address (§4.5). Vectors `reject-v14-relabelled-legacy` and
+`reject-legacy-version-not-string` pin the version test.
+
 Superseded root proofs, not to be cited: `1c1b8371…` (the 2026-10-31 bytes; its
 pending proof is in git history at commit `3453f29`), `191ed2b0…` (the
 2026-11-05 bytes; at commit `412e886`), `efa0a4f8…` (the first 2026-11-08
-bytes; at commit `69e1880`) and `16401a6b…` (the second 2026-11-08 bytes; at
-commit `276b781`).
+bytes; at commit `69e1880`), `16401a6b…` (the second 2026-11-08 bytes; at
+commit `276b781`) and `58646785…` (the 2026-11-09 bytes; upgraded proof at commit
+`b6e57a9`, Bitcoin blocks 975224, 975226 and 975282).
 
 When the v1.4 files were merged here on 2026-10-31, the root proofs for
 `docs/SPEC.md` and `cell-crypto.js` still described v1.3-era bytes; the v1.4

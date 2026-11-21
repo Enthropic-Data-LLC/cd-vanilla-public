@@ -16,7 +16,9 @@
 //! not leak, without being able to read it, is the property the format rests on.
 
 use cellular_defense::canonical::canonicalize;
-use cellular_defense::cell::{create, open, verify, CreateOptions, OpenOptions, Recipient};
+use cellular_defense::cell::{
+    create, open, verify, CreateOptions, OpenOptions, Recipient, INNER_SIG_VERSIONS,
+};
 use cellular_defense::crypto;
 use cellular_defense::keys::KeyRecord;
 use cellular_defense::lifetime;
@@ -227,6 +229,11 @@ fn cmd_verify(args: &[String]) -> CmdResult {
         "payload_hash   {}",
         if result.payload_hash_ok { "ok" } else { "absent" }
     );
+    if INNER_SIG_VERSIONS.contains(&result.version.as_str()) {
+        // §4.5: who signed is not visible here, by design.
+        println!("signature      inside the encrypted payload — `open` verifies it");
+        return Ok(());
+    }
     if result.signed {
         println!(
             "signature      valid, by key {}",
@@ -362,6 +369,9 @@ fn cmd_open(args: &[String]) -> CmdResult {
             "signed by key {}",
             result.signer_fingerprint.as_deref().unwrap_or("(unknown)")
         );
+        if let Some(signed_to) = &result.signed_to {
+            print_addressees(signed_to, &opts.keys);
+        }
     } else {
         println!("not signed     nothing in this cell says who sent it");
     }
@@ -375,6 +385,25 @@ fn cmd_open(args: &[String]) -> CmdResult {
         println!("sender meta: {}", shown(&canonicalize(meta)?));
     }
     Ok(())
+}
+
+/// Who a v1.4 signature names (§4.5). The signature does not cover the access
+/// map, so a cell can be re-addressed to someone the signer never named.
+fn print_addressees(signed_to: &[String], keys: &[KeyRecord]) {
+    let listed = signed_to.join(", ");
+    println!(
+        "signed for     {}",
+        if listed.is_empty() { "(no key recipients)".to_string() } else { shown(&listed) }
+    );
+    if keys.is_empty() {
+        println!("note           opened without a key: the signature names key recipients only, so it cannot confirm this cell was meant for you");
+    } else if !keys
+        .iter()
+        .filter_map(|k| k.fingerprint().ok())
+        .any(|f| signed_to.contains(&f))
+    {
+        println!("warning        none of your keys is among them: this cell may have been forwarded or re-addressed after signing");
+    }
 }
 
 // ── Sender-chosen text ──────────────────────────────────────────────────────

@@ -225,6 +225,11 @@ public final class Cdcell {
         System.out.println("version        " + result.version());
         System.out.println("header_hash    ok");
         System.out.println("payload_hash   " + (result.payloadHashOk() ? "ok" : "absent"));
+        if (Cell.INNER_SIG_VERSIONS.contains(result.version())) {
+            // §4.5: who signed is not visible here, by design.
+            System.out.println("signature      inside the encrypted payload — `open` verifies it");
+            return;
+        }
         if (result.signed()) {
             System.out.println("signature      valid, by key " + result.signerFingerprint());
             System.out.println("               (claims to be \"" + result.claimedSigner()
@@ -345,6 +350,9 @@ public final class Cdcell {
         // Who signed comes first, before any text the sender chose.
         if (result.signed()) {
             System.out.println("signed by key " + result.signerFingerprint());
+            if (result.signedTo() != null) {
+                printAddressees(result.signedTo(), opts.keys);
+            }
         } else {
             System.out.println("not signed     nothing in this cell says who sent it");
         }
@@ -352,6 +360,20 @@ public final class Cdcell {
                 + " bytes, " + shown(result.contentType()) + ")");
         if (result.meta() != null) {
             System.out.println("sender meta: " + shown(Canonical.canonicalize(result.meta())));
+        }
+    }
+
+    /**
+     * Who a v1.4 signature names (§4.5). The signature does not cover the access
+     * map, so a cell can be re-addressed to someone the signer never named.
+     */
+    private static void printAddressees(List<String> signedTo, List<KeyRecord> keys) {
+        System.out.println("signed for     "
+                + (signedTo.isEmpty() ? "(no key recipients)" : shown(String.join(", ", signedTo))));
+        if (keys.isEmpty()) {
+            System.out.println("note           opened without a key: the signature names key recipients only, so it cannot confirm this cell was meant for you");
+        } else if (keys.stream().noneMatch(k -> signedTo.contains(k.fingerprint()))) {
+            System.out.println("warning        none of your keys is among them: this cell may have been forwarded or re-addressed after signing");
         }
     }
 

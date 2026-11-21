@@ -508,6 +508,25 @@ func TestV14BlindEntriesTrialDecryption(t *testing.T) {
 	}
 }
 
+// Verify cannot see a v1.4 signature, so a required signer must be an error. It
+// used to return Signed=false with no error: a clean pass to a caller gating on it.
+func TestV14VerifyRefusesExpectedSigner(t *testing.T) {
+	alice, bob := mustKey(t, "Alice"), mustKey(t, "Bob")
+	unsigned := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{})
+	signed := seal(t, []byte("x"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob})
+	for _, c := range []*cell.Object{unsigned, signed} {
+		if _, err := cell.Verify(c, bob.Fingerprint()); !errors.Is(err, cell.ErrSignature) {
+			t.Fatalf("Verify with a required signer: %v", err)
+		}
+		if _, err := cell.Verify(c, ""); err != nil {
+			t.Fatalf("key-less Verify: %v", err)
+		}
+	}
+	if _, err := cell.Open(signed, cell.OpenOptions{Keys: []*cell.KeyRecord{alice}, ExpectedSigner: bob.Fingerprint()}); err != nil {
+		t.Fatalf("Open still checks the signer: %v", err)
+	}
+}
+
 func TestV14InnerSignature(t *testing.T) {
 	alice, bob := mustKey(t, "Alice"), mustKey(t, "Bob")
 	c := seal(t, []byte("signed"), []cell.Recipient{cell.KeyRecipient(alice)}, cell.CreateOptions{Sender: bob})

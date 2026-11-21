@@ -34,7 +34,7 @@ const cryptoJs = readFileSync(`${ROOT}/cell-crypto.js`, 'utf8');
 const app = new Function(cryptoJs + '\n;' + appJs + `
 ;kcAll = async () => [];
 return {
-  renderOpen, renderEncrypt,
+  renderOpen, renderEncrypt, addresseeNote,
   setCell: (c) => { _openCell = c; },
   setFile: (f) => { _encFile = f; },
 };`)();
@@ -43,7 +43,10 @@ return {
 const P = '"><img src=x onerror=PWNED>';
 const Q = 'x" autofocus onfocus="PWNED';
 
-function hostileCell(legacy) {
+// kind: 'v1.4', 'legacy' (a real v2.0 cell, whose plaintext metadata is shown),
+// or 'bad-cd-version' (no version and a cd_version that is not 2.x: shown as
+// an unknown version, never as legacy).
+function hostileCell(kind) {
   const c = {
     doc_id: P + Q,
     created_at: P,
@@ -63,7 +66,9 @@ function hostileCell(legacy) {
     payload: { alg: P },
     original_filename: P + Q, content_type: P + Q, original_size: P,
   };
-  if (legacy) c.cd_version = '2.0' + P; else c.version = '1.4';
+  if (kind === 'legacy') c.cd_version = '2.0';
+  else if (kind === 'bad-cd-version') c.cd_version = '2.0' + P;
+  else c.version = '1.4';
   return c;
 }
 
@@ -87,16 +92,16 @@ async function check(name, fn) {
 }
 
 console.log('── Render (index.html)');
-for (const legacy of [false, true]) {
-  await check(`Open view escapes every field of a hostile ${legacy ? 'legacy v2.0' : 'v1.4'} cell`, async () => {
-    app.setCell(hostileCell(legacy));
+for (const kind of ['v1.4', 'legacy', 'bad-cd-version']) {
+  await check(`Open view escapes every field of a hostile ${kind === 'legacy' ? 'legacy v2.0' : kind} cell`, async () => {
+    app.setCell(hostileCell(kind));
     const el = stubEl();
     await app.renderOpen(el);
     return el.innerHTML;
   });
 }
 await check('Open view escapes a quorum cell with markup in share_index', async () => {
-  const c = hostileCell(false);
+  const c = hostileCell('v1.4');
   c.header.threshold.required = 2;
   app.setCell(c);
   const el = stubEl();
@@ -109,6 +114,19 @@ await check('Encrypt view escapes a file name and type carried over by Mitosis',
   const el = stubEl();
   await app.renderEncrypt(el);
   return el.innerHTML;
+});
+
+// v1.4 §4.5: a valid signature on a cell re-addressed to someone the signer
+// never named must not read as a plain "signed by" to that person.
+await check('Signed v1.4 cell opened by a key the signer did not address → warning', async () => {
+  const to = ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb'];
+  const ok = (cond, what) => { if (!cond) throw new Error(what); };
+  ok(app.addresseeNote(to, ['aaaaaaaaaaaaaaaa']) === '', 'addressed key warned');
+  ok(/NOT addressed to your key cccccccccccccccc/.test(app.addresseeNote(to, ['cccccccccccccccc'])), 'forwarded key not warned');
+  ok(/NOT addressed/.test(app.addresseeNote(to, ['aaaaaaaaaaaaaaaa', 'cccccccccccccccc'])), 'quorum with one stranger not warned');
+  ok(/cannot confirm/.test(app.addresseeNote(to, null)), 'passphrase/YubiKey open not flagged');
+  ok(app.addresseeNote(null, ['cccccccccccccccc']) === '', '≤v1.3 cell (no signedTo) warned');
+  return '';
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

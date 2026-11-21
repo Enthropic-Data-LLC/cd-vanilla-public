@@ -403,6 +403,26 @@ class CellTest {
         assertThrows(CellException.NoMatchingKey.class, () -> Cell.open(cell, keys(carol)));
     }
 
+    /**
+     * verify cannot see a v1.4 signature, so a required signer must be an error.
+     * It used to return signed=false: a clean pass to a caller gating on it.
+     */
+    @Test
+    void v14VerifyRefusesExpectedSigner() {
+        Cell.CreateOptions opts = new Cell.CreateOptions();
+        opts.sender = BOB;
+        Map<String, Object> signed = seal("x".getBytes(), List.of(Cell.Recipient.forKey(ALICE)), opts);
+        Map<String, Object> unsigned = seal("x".getBytes(), List.of(Cell.Recipient.forKey(ALICE)),
+                new Cell.CreateOptions());
+        for (Map<String, Object> cell : List.of(signed, unsigned)) {
+            assertThrows(CellException.Signature.class, () -> Cell.verify(cell, BOB.fingerprint()));
+            Cell.verify(cell, null);
+        }
+        Cell.OpenOptions expect = keys(ALICE);
+        expect.expectedSigner = BOB.fingerprint();
+        assertEquals(BOB.fingerprint(), Cell.open(signed, expect).signerFingerprint());
+    }
+
     @Test
     void v14SignatureIsInsideThePayload() {
         Cell.CreateOptions opts = new Cell.CreateOptions();

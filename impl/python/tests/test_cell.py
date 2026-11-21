@@ -578,6 +578,30 @@ class TestV14(CellTestCase):
         with self.assertRaises(SignatureError):
             cell_open(signed, keys=[self.alice], expected_signer="deadbeefdeadbeef")
 
+    def test_relabelled_as_legacy_is_refused(self):
+        # "No version, any cd_version" once counted as legacy. The reference
+        # opener then decrypted under the real v1.4 AAD and read the editor's
+        # filename and type, skipping header_hash, payload_hash and the
+        # signature. Only cd_version 2.x is legacy; anything else is refused.
+        signed = self.seal(recipients=[Recipient.for_key(self.alice)], sender=self.bob)
+        for cd in ("1.4", "1.3", "2.0x", " 2.0", "3.0", 2.0):
+            cell = json.loads(json.dumps(signed))
+            del cell["version"]
+            cell.update(cd_version=cd, original_filename="evil.html", content_type="text/html")
+            with self.subTest(cd_version=cd), self.assertRaises(UnsupportedVersionError):
+                cell_open(cell, keys=[self.alice])
+
+    def test_verify_cell_refuses_expected_signer_it_cannot_check(self):
+        # A v1.4 signature is inside the ciphertext. verify_cell used to return
+        # signed=False here, a clean pass to a caller gating on expected_signer.
+        unsigned = self.seal()
+        signed = self.seal(recipients=[Recipient.for_key(self.alice)], sender=self.bob)
+        for cell in (unsigned, signed):
+            with self.assertRaisesRegex(SignatureError, "cell_open"):
+                verify_cell(cell, expected_signer=self.bob.fingerprint)
+            self.assertFalse(verify_cell(cell).signed)  # no requirement: still a key-less check
+        cell_open(signed, keys=[self.alice], expected_signer=self.bob.fingerprint)
+
     def test_signature_binds_cell_identity(self):
         for field in ("created_at", "doc_id"):
             cell = self.seal(sender=self.bob)

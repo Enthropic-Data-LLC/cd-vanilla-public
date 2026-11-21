@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /** Sealing and opening {@code .cell} documents — spec §4, §5, §10, §12. */
 public final class Cell {
@@ -411,6 +412,14 @@ public final class Cell {
      */
     public static VerifyResult verify(Map<String, Object> cell, String expectedSigner) {
         String version = versionOf(cell);
+        // A v1.4 signature is inside the ciphertext (§4.5), where no key-less
+        // check can reach it. Returning normally would look as if the
+        // requirement had been met.
+        if (expectedSigner != null && INNER_SIG_VERSIONS.contains(version)) {
+            throw new CellException.Signature("a v" + version + " cell carries its signature inside"
+                    + " the ciphertext, so verify cannot check it against " + expectedSigner
+                    + " — use open with expectedSigner");
+        }
         Map<String, Object> header = Json.object(cell, "header");
         if (header == null) {
             throw new CellException.Malformed("missing header");
@@ -480,8 +489,7 @@ public final class Cell {
             signerFingerprint = CellCrypto.fingerprint(spkiDer);
         }
 
-        // v1.4 signatures are inside the payload; open() checks expectedSigner there.
-        if (expectedSigner != null && !INNER_SIG_VERSIONS.contains(version)) {
+        if (expectedSigner != null) {
             if (!signed) {
                 throw new CellException.Signature("expected a cell signed by " + expectedSigner
                         + ", but it carries no signature (removal is undetectable — see spec §4.1)");
@@ -567,8 +575,7 @@ public final class Cell {
 
     private static OpenResult openCell(Map<String, Object> cell, OpenOptions opts) {
         String version = versionOf(cell);
-        boolean isLegacy = Json.string(cell, "version") == null
-                && Json.string(cell, "cd_version") != null;
+        boolean isLegacy = isLegacyCell(cell);
         long now = opts.now != null ? opts.now : KeyRecord.now();
 
         // Step 0: advisory gates. Cheapest of all, and they need nothing but the clock.
@@ -591,7 +598,9 @@ public final class Cell {
         // Steps 1-3: integrity and authenticity, before any key material is touched.
         VerifyResult verified = null;
         if (!isLegacy) {
-            verified = verify(cell, opts.expectedSigner);
+            // ≤v1.3: the signer is checked here, before any key work (§10). v1.4:
+            // it is inside the ciphertext and is checked once that is decrypted.
+            verified = verify(cell, INNER_SIG_VERSIONS.contains(version) ? null : opts.expectedSigner);
         } else if (opts.expectedSigner != null) {
             throw new CellException.Signature("legacy v2.x cells carry no signature to check");
         }
@@ -948,19 +957,33 @@ public final class Cell {
 
     // ─── Helpers ────────────────────────────────────────────────────────────
 
-    private static String versionOf(Map<String, Object> cell) {
-        String version = Json.string(cell, "version");
-        if (version != null) {
-            if (!SUPPORTED_VERSIONS.contains(version)) {
-                throw new CellException.UnsupportedVersion(version);
-            }
-            return version;
-        }
+    /**
+     * A pre-spec v2.x cell (§12) is the ONLY kind read without a {@code version}.
+     * Neither field is authenticated, so the test is exact: a {@code version} of
+     * any other type, or a {@code cd_version} that is not 2.x, is refused.
+     */
+    private static final Pattern LEGACY_CD_VERSION = Pattern.compile("2\\.[0-9]+");
+
+    private static boolean isLegacyCell(Map<String, Object> cell) {
         String legacy = Json.string(cell, "cd_version");
-        if (legacy != null) {
-            return legacy; // legacy v2.x (§12)
+        return cell.get("version") == null && legacy != null
+                && LEGACY_CD_VERSION.matcher(legacy).matches();
+    }
+
+    private static String versionOf(Map<String, Object> cell) {
+        if (isLegacyCell(cell)) {
+            return Json.string(cell, "cd_version"); // legacy v2.x (§12)
         }
-        throw new CellException.UnsupportedVersion("(absent)");
+        Object version = cell.get("version");
+        if (version == null) {
+            Object legacy = cell.get("cd_version");
+            throw new CellException.UnsupportedVersion(legacy == null ? "(absent)"
+                    : "cd_version " + legacy + ", not a legacy (2.x) version, and no version field");
+        }
+        if (!(version instanceof String) || !SUPPORTED_VERSIONS.contains(version)) {
+            throw new CellException.UnsupportedVersion(String.valueOf(version));
+        }
+        return (String) version;
     }
 
     private static String formatTimestamp(long seconds) {

@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"time"
 )
@@ -473,10 +474,18 @@ type VerifyResult struct {
 // header_sig entirely and the result is indistinguishable from a cell that was
 // never signed, so pass expectedSigner (a fingerprint learned out of band)
 // whenever authorship matters.
+//
+// A v1.4 signature is inside the ciphertext (§4.5), where no key-less check can
+// reach it, so expectedSigner on a v1.4 cell is an error rather than a clean
+// return that looks as if the requirement was met: use Open with ExpectedSigner.
 func Verify(c *Object, expectedSigner string) (*VerifyResult, error) {
 	version, err := versionOf(c)
 	if err != nil {
 		return nil, err
+	}
+	if expectedSigner != "" && InnerSigVersions[version] {
+		return nil, fmt.Errorf("%w: a v%s cell carries its signature inside the ciphertext, so Verify "+
+			"cannot check it against %s — use Open with ExpectedSigner", ErrSignature, version, expectedSigner)
 	}
 	header := c.GetObject("header")
 	if header == nil {
@@ -556,8 +565,7 @@ func Verify(c *Object, expectedSigner string) (*VerifyResult, error) {
 		result.SignerFingerprint = Fingerprint(spkiDER)
 	}
 
-	// v1.4 signatures are inside the payload; Open checks ExpectedSigner there.
-	if expectedSigner != "" && !InnerSigVersions[version] {
+	if expectedSigner != "" {
 		if !result.Signed {
 			return nil, fmt.Errorf("%w: expected a cell signed by %s, but it carries no signature "+
 				"(removal is undetectable — see spec §4.1)", ErrSignature, expectedSigner)
@@ -643,7 +651,7 @@ func openCell(c *Object, opts OpenOptions) (*OpenResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	isLegacy := c.GetString("version") == "" && c.GetString("cd_version") != ""
+	isLegacy := isLegacyCell(c)
 
 	now := opts.Now
 	if now == 0 {
@@ -666,7 +674,13 @@ func openCell(c *Object, opts OpenOptions) (*OpenResult, error) {
 	// Steps 1-3: integrity and authenticity, before any key material is touched.
 	var verified *VerifyResult
 	if !isLegacy {
-		if verified, err = Verify(c, opts.ExpectedSigner); err != nil {
+		// ≤v1.3: the signer is checked here, before any key work (§10). v1.4: it
+		// is inside the ciphertext and is checked once that is decrypted.
+		signer := opts.ExpectedSigner
+		if InnerSigVersions[version] {
+			signer = ""
+		}
+		if verified, err = Verify(c, signer); err != nil {
 			return nil, err
 		}
 	} else if opts.ExpectedSigner != "" {
@@ -1058,17 +1072,35 @@ func writeIndented(b *bytes.Buffer, v Value, indent string) error {
 	}
 }
 
+// legacyCDVersion: a pre-spec v2.x cell (§12) is the ONLY kind read without a
+// version. Neither field is authenticated, so the test is exact: a version of
+// any other type, or a cd_version that is not 2.x, is refused.
+var legacyCDVersion = regexp.MustCompile(`^2\.[0-9]+$`)
+
+func isLegacyCell(c *Object) bool {
+	if v, _ := c.Get("version"); v != nil {
+		return false
+	}
+	return legacyCDVersion.MatchString(c.GetString("cd_version"))
+}
+
 func versionOf(c *Object) (string, error) {
-	if version := c.GetString("version"); version != "" {
-		if !SupportedVersions[version] {
-			return "", fmt.Errorf("%w %q — update the app to open this cell", ErrUnsupportedVersion, version)
+	if isLegacyCell(c) {
+		return c.GetString("cd_version"), nil // legacy v2.x (§12)
+	}
+	v, _ := c.Get("version")
+	if v == nil {
+		if cd, _ := c.Get("cd_version"); cd != nil {
+			return "", fmt.Errorf("%w: cd_version %q is not a legacy (2.x) version, and the cell has no version field",
+				ErrUnsupportedVersion, fmt.Sprint(cd))
 		}
-		return version, nil
+		return "", fmt.Errorf("%w: cell has no version field", ErrUnsupportedVersion)
 	}
-	if legacy := c.GetString("cd_version"); legacy != "" {
-		return legacy, nil // legacy v2.x (§12)
+	version, ok := v.(string)
+	if !ok || !SupportedVersions[version] {
+		return "", fmt.Errorf("%w %q — update the app to open this cell", ErrUnsupportedVersion, fmt.Sprint(v))
 	}
-	return "", fmt.Errorf("%w: cell has no version field", ErrUnsupportedVersion)
+	return version, nil
 }
 
 func formatTS(ts int64) string {

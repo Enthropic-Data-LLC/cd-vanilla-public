@@ -374,6 +374,25 @@ fn v14_entries_are_blind_and_found_by_trial() {
     assert!(matches!(open(&cell, &keys_for(&[&carol])), Err(Error::NoMatchingKey)));
 }
 
+/// `verify` cannot see a v1.4 signature, so a required signer must be an error.
+/// It used to return `signed: false`: a clean pass to a caller gating on it.
+#[test]
+fn v14_verify_refuses_expected_signer() {
+    let alice = KeyRecord::generate("Alice");
+    let bob = KeyRecord::generate("Bob");
+    let bob_fp = bob.fingerprint().unwrap();
+    let to = [Recipient::for_key(&alice).unwrap()];
+    let unsigned = seal(b"x", &to, CreateOptions::default());
+    let signed = seal(b"x", &to, CreateOptions { sender: Some(bob.clone()), ..Default::default() });
+    for cell in [&unsigned, &signed] {
+        assert!(matches!(verify(cell, Some(&bob_fp)), Err(Error::Signature(_))));
+        assert!(verify(cell, None).is_ok());
+    }
+    let mut opts = keys_for(&[&alice]);
+    opts.expected_signer = Some(bob_fp);
+    assert!(open(&signed, &opts).is_ok());
+}
+
 #[test]
 fn v14_signature_is_inside_the_payload() {
     let alice = KeyRecord::generate("Alice");

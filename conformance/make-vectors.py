@@ -111,7 +111,8 @@ def add(
         "description": description,
         "expect": expect,
         "sealed_by": sealed_by,
-        "cell_version": cell.get("version") or cell.get("cd_version"),
+        # Always text in the manifest, even for a vector whose version field is malformed.
+        "cell_version": str(cell.get("version") or cell.get("cd_version")),
         "open_with": open_with or {},
     }
     if expect == "open":
@@ -409,6 +410,8 @@ DERIVED_IDS = (
     "v13-header-sig-by-not-trusted",
     "reject-retention-expired-float", "reject-timed-release-locked-exponent",
     "v13-quorum-3of4-float", "v14-quorum-2of3-exponent",
+    # Added 2026-11-21 after the code review of 2026-11-20.
+    "reject-v14-relabelled-legacy", "reject-legacy-version-not-string",
 )
 
 
@@ -451,6 +454,7 @@ def build_derived(deal_file: str) -> None:
               "always verified; the filename, media type and signer come from inside the "
               "ciphertext.")
     build_derived_2026_11_09(deal_file)
+    build_derived_2026_11_21()
 
 
 def build_derived_2026_11_09(deal_file: str) -> None:
@@ -512,6 +516,30 @@ def build_derived_2026_11_09(deal_file: str) -> None:
         notes="Same canonical bytes as the integer form (§4.1.1).")
     retext("open", "v14-quorum-2of3-exponent",
            (r'("(?:required|of_total|share_index)": )(\d+)\b', r'\g<1>\g<2>e0'))
+
+
+def build_derived_2026_11_21() -> None:
+    # Only a cell with no `version` and a cd_version of 2.x is legacy. The test
+    # was once "no version, any cd_version": the reference then decrypted this
+    # cell under its real v1.4 AAD and took the legacy path, with no hash or
+    # signature check and the filename and media type below.
+    c = committed("open", "v14-ecdh-signed")
+    del c["version"]
+    c.update(cd_version="1.4", original_filename="contract-final.html", content_type="text/html")
+    add("reject-v14-relabelled-legacy", c, expect="reject",
+        description="v14-ecdh-signed with version deleted, cd_version \"1.4\" and plaintext "
+                    "filename and type added",
+        open_with={"keys": ["alice"]}, reject_reason="unsupported-version", reject_at_step=0,
+        notes="cd_version never stands in for version. An opener that treats this as legacy and "
+              "still applies the v1.4 AAD accepts the editor's filename and skips the signature.")
+
+    c = committed("open", "legacy-v2-no-hkdf")
+    c["version"] = 2
+    add("reject-legacy-version-not-string", c, expect="reject",
+        description="legacy-v2-no-hkdf with a numeric version field added",
+        open_with={"keys": ["alice"]}, reject_reason="unsupported-version", reject_at_step=0,
+        notes="A version that is present but is not a supported string is refused. It does not "
+              "count as absent, so the cell does not fall through to the legacy path.")
 
 
 def add_derived_only() -> int:

@@ -147,7 +147,10 @@ def cmd_seal(args: argparse.Namespace) -> int:
 
 def cmd_verify(args: argparse.Namespace) -> int:
     cell = _read_cell(Path(args.cell))
-    result = verify_cell(cell, expected_signer=args.expect_signer)
+    # A v1.4 signer can only be checked by `open`; verify_cell refuses the
+    # requirement for one, and this command says so below.
+    inner = cell.get("version") in INNER_SIG_VERSIONS
+    result = verify_cell(cell, expected_signer=None if inner else args.expect_signer)
     print(f"version        {result.version}")
     print("header_hash    ok")
     print(f"payload_hash   {'ok' if result.payload_hash_ok else 'absent'}")
@@ -208,9 +211,10 @@ def cmd_open(args: argparse.Namespace) -> int:
     passphrases = []
     if args.passphrase:
         passphrases.append(getpass.getpass("Passphrase: "))
+    keys = _load_keys(args.key or [])
     result = cell_open(
         cell,
-        keys=_load_keys(args.key or []),
+        keys=keys,
         passphrases=passphrases,
         expected_signer=args.expect_signer,
         enforce_advisory=not args.ignore_advisory,
@@ -233,6 +237,12 @@ def cmd_open(args: argparse.Namespace) -> int:
         print(f"signed by key {result.signer_fingerprint}")
         if result.signed_to is not None:
             print(f"signed for     {shown(', '.join(result.signed_to)) or '(no key recipients)'}")
+            # §4.5: the signature does not cover the access map, so a cell can
+            # be re-addressed to someone the signer never named.
+            if not keys:
+                print("note           opened without a key: the signature names key recipients only, so it cannot confirm this cell was meant for you")
+            elif not {k.fingerprint for k in keys} & set(result.signed_to):
+                print("warning        none of your keys is among them: this cell may have been forwarded or re-addressed after signing")
     else:
         print("not signed     nothing in this cell says who sent it")
     print(f"wrote {shown(destination)}  ({len(result.data)} bytes, {shown(result.content_type)})")

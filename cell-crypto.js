@@ -259,6 +259,19 @@ const PADDED_VERSIONS        = new Set(['1.4']);
 const INNER_SIG_VERSIONS     = new Set(['1.4']);
 const BLIND_ENTRY_VERSIONS   = new Set(['1.4']);
 
+// A pre-spec v2.x cell (§12) is the ONLY kind read without a `version` field.
+// Neither field is authenticated, so the test must be exact. It was once
+// "no version, any cd_version", which let an editor relabel a signed v1.4
+// cell as cd_version "1.4": it still decrypted under the real v1.4 AAD, then
+// took the legacy path, skipping header_hash, payload_hash and the sender
+// signature and taking the filename and media type from the editor.
+// Anything else without a supported `version` is refused.
+const LEGACY_CD_VERSION = /^2\.\d+$/;
+function isLegacyCell(cell) {
+  return cell?.version == null && typeof cell?.cd_version === 'string' &&
+         LEGACY_CD_VERSION.test(cell.cd_version);
+}
+
 // Trial decryption costs one ECDH per (entry × local key); bound the map so a
 // hostile cell cannot make opening it arbitrarily expensive.
 const MAX_ACCESS_ENTRIES = 256;
@@ -1210,8 +1223,15 @@ async function cellCreate(file, recipients, options = {}) {
   // options.meta: optional sender-defined object (note, case number, reply
   // instructions, …) carried INSIDE the ciphertext — metadata the server and
   // any observer never see. Additive and ignored by older readers.
-  const manifest = { filename: file.name, content_type: file.type || 'application/octet-stream', size: raw.byteLength };
-  if (options.meta && typeof options.meta === 'object') manifest.meta = options.meta;
+  //
+  // Round-tripped through JSON once, so the value the v1.4 sender signature
+  // covers is exactly the value stored: JSON.stringify applies toJSON (a Date
+  // becomes a string) and drops functions and undefined, canonicalize() does
+  // neither, and a meta holding a Date once sealed a cell no one could open.
+  const manifest = JSON.parse(JSON.stringify({
+    filename: file.name, content_type: file.type || 'application/octet-stream', size: raw.byteLength,
+    ...(options.meta && typeof options.meta === 'object' ? { meta: options.meta } : {}),
+  }));
 
   // Advisory metadata is fixed before encryption so it can be authenticated as
   // AES-GCM AAD (spec v1.2). These exact values are reused in the header below.
@@ -1229,13 +1249,17 @@ async function cellCreate(file, recipients, options = {}) {
 
   const innerSig = INNER_SIG_VERSIONS.has(version);
   const sigKey = await _senderSigKey(options.senderRec);
+  // An opener needs the public key to verify; a signing key without it seals a
+  // cell every recipient refuses ("Malformed sender signature").
+  if (sigKey && typeof options.senderRec.spki !== 'string')
+    throw new Error('senderRec has a signing key but no spki — the signature could not be verified');
   if (innerSig && sigKey) {
     const senderSpki = options.senderRec.spki;
     const to = (await Promise.all(recipients.filter(r => r.method === 'ecdh-p256' && r.spki)
       .map(r => fp(r.spki)))).sort();
     const sigInput = _senderSigInput({
       version, doc_id: docId, created_at: createdAt,
-      aad: new TextDecoder().decode(aad), manifest: { ...manifest },
+      aad: new TextDecoder().decode(aad), manifest,
       content_sha256: toB64(await sha256(raw)), sender_spki: senderSpki, to,
     });
     const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, sigKey, sigInput);
@@ -1300,11 +1324,14 @@ async function cellCreate(file, recipients, options = {}) {
 
 async function cellOpen(cell, tryDecryptFn, options = {}) {
   const { onAttempt, signal } = options;
-  // Version gate — warn on unknown versions rather than silently misbehaving
-  const fmtVersion = cell.version ?? cell.cd_version ?? 'unknown';
-  const isLegacy   = !cell.version && cell.cd_version;
+  // Version gate. Legacy only by isLegacyCell(); otherwise `version` itself
+  // must be supported. cd_version never stands in for it.
+  const isLegacy   = isLegacyCell(cell);
+  const fmtVersion = isLegacy ? cell.cd_version : cell.version;
+  if (!isLegacy && cell.version == null && cell.cd_version != null)
+    throw new Error(`Malformed cell — cd_version "${cell.cd_version}" is not a legacy (2.x) version, and the cell has no version`);
   if (!isLegacy && !SUPPORTED_VERSIONS.has(fmtVersion))
-    throw new Error(`Unsupported cell format version "${fmtVersion}" — update the app to open this cell`);
+    throw new Error(`Unsupported cell format version "${fmtVersion ?? 'unknown'}" — update the app to open this cell`);
 
   // Advisory lifetime checks (spec §8) — before any crypto work.
   //

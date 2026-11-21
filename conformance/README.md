@@ -42,7 +42,7 @@ Python port — the field names are the spec's, not any one library's.
 
 ## `vectors/`
 
-57 captured cells — 27 that must open, 30 that must be refused — indexed by
+59 captured cells — 27 that must open, 32 that must be refused — indexed by
 `vectors/manifest.json`, plus 225 canonical-serialization vectors. All five
 implementations agree on all of them: every open vector opens in the JavaScript
 reference and in the Python, Go, Rust and Java ports with byte-identical

@@ -1189,6 +1189,38 @@
         ]
       },
       "notes": "Same canonical bytes as the integer form (§4.1.1)."
+    },
+    {
+      "id": "reject-v14-relabelled-legacy",
+      "file": "reject/reject-v14-relabelled-legacy.cell",
+      "description": "v14-ecdh-signed with version deleted, cd_version \"1.4\" and plaintext filename and type added",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "1.4",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "unsupported-version",
+      "reject_at_step": 0,
+      "notes": "cd_version never stands in for version. An opener that treats this as legacy and still applies the v1.4 AAD accepts the editor's filename and skips the signature."
+    },
+    {
+      "id": "reject-legacy-version-not-string",
+      "file": "reject/reject-legacy-version-not-string.cell",
+      "description": "legacy-v2-no-hkdf with a numeric version field added",
+      "expect": "reject",
+      "sealed_by": "python",
+      "cell_version": "2",
+      "open_with": {
+        "keys": [
+          "alice"
+        ]
+      },
+      "reject_reason": "unsupported-version",
+      "reject_at_step": 0,
+      "notes": "A version that is present but is not a supported string is refused. It does not count as absent, so the cell does not fall through to the legacy path."
     }
   ]
 }

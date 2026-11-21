@@ -814,6 +814,39 @@ test('v1.4', 'a header signature on a v1.4 cell is refused', async () => {
   await rejects(() => openWith(cell, a), 'inside the payload');
 });
 
+test('v1.4', 'relabelled as legacy (no version, cd_version "1.4") → refused, not opened as v2.0', async () => {
+  // Was the reference's legacy test: "no version, any cd_version". The GCM tag
+  // still passed under the real v1.4 AAD, then the legacy branch took the
+  // editor's filename and type and skipped every hash and the sender signature.
+  const a = await ecdhPair('A'), signer = await ecdhPair('Signer');
+  const cell = await w.cellCreate(mkFile('real', 'deal.txt', 'text/plain'), [a],
+    { senderRec: { pkcs8: signer.pkcs8, spki: signer.spki } });
+  for (const cd of ['1.4', '1.3', '2.0x', ' 2.0', '3.0', 2.0]) {
+    const c = JSON.parse(JSON.stringify(cell));
+    delete c.version;
+    Object.assign(c, { cd_version: cd, original_filename: 'evil.html', content_type: 'text/html' });
+    await rejects(() => openWith(c, a), 'cd_version');
+  }
+});
+
+test('v1.4', 'meta holding a Date or a function: the signature covers what is stored', async () => {
+  const a = await ecdhPair('A'), signer = await ecdhPair('Signer');
+  const cell = await w.cellCreate(mkFile('dated', 'd.txt', 'text/plain'), [a],
+    { senderRec: { pkcs8: signer.pkcs8, spki: signer.spki },
+      meta: { when: new Date(0), skip: () => 1, gone: undefined, n: 1 } });
+  const res = await openWith(cell, a);
+  eq(res.sigVerified, signer.fingerprint);
+  eq(JSON.stringify(res.meta), JSON.stringify({ when: '1970-01-01T00:00:00.000Z', n: 1 }));
+});
+
+test('v1.4', 'a signing key without its spki is refused at create, not sealed unopenable', async () => {
+  const a = await ecdhPair('A'), signer = await ecdhPair('Signer');
+  const sig = await w.crypto.subtle.importKey('pkcs8', w.fromB64(signer.pkcs8),
+    { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  for (const version of ['1.4', '1.3'])
+    await rejects(() => w.cellCreate(mkFile('x', 'x.txt', 'text/plain'), [a], { senderRec: { sig }, version }), 'no spki');
+});
+
 test('v1.4', 'relabelling the version fails: the version is authenticated', async () => {
   const a = await ecdhPair('A');
   const cell = await w.cellCreate(mkFile('v', 'v.txt', 'text/plain'), [a]);

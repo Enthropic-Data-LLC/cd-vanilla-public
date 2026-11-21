@@ -643,8 +643,10 @@ async function renderOpen(app) {
   const thrReq     = c.header?.threshold?.required;
   const threshold  = Number.isInteger(thrReq) && thrReq > 0 ? thrReq : 1;
   const docId      = String(c.doc_id || c.cell_id || '');
-  const fmtVersion = c.version ?? c.cd_version ?? 'unknown';
-  const isLegacy   = !c.version && c.cd_version;
+  // Same test cellOpen uses: a cd_version that is not 2.x does not make a
+  // cell legacy, and does not stand in for `version` (it would open as nothing).
+  const isLegacy   = isLegacyCell(c);
+  const fmtVersion = isLegacy ? c.cd_version : (c.version ?? (c.cd_version != null ? `cd_version ${c.cd_version}` : 'unknown'));
   const policy     = c.header?.policy;
   // original_filename / content_type / original_size are legacy v2.0 fields,
   // authenticated by nothing. On a supported version the real values are inside
@@ -720,13 +722,42 @@ async function resolveSigner(spki) {
   const all = [...(await kcAll()), ...lsPubAll()];
   return all.find(k => k.spki && k.spki === spki) || null;
 }
-async function sigNoteFor(result) {
+// openerFps: fingerprints of the keys that actually unwrapped this cell
+// (computed from those keys, never read from the file), or null when it was
+// opened by passphrase or YubiKey.
+async function sigNoteFor(result, openerFps = null) {
   if (!result.sigVerified) return '';
   const realFp = result.sigKey ? await fp(result.sigKey) : null;
   const signer = await resolveSigner(result.sigKey);
   // Shown with showAlert(), i.e. textContent: plain text, nothing to escape.
-  if (signer) return ` · ✍️ signed by ${signer.label} (${realFp || ''})`;
-  return ` · ⚠️ signed by UNKNOWN key ${realFp || '?'} — not in your keychain/contacts`;
+  const by = signer ? ` · ✍️ signed by ${signer.label} (${realFp || ''})`
+                    : ` · ⚠️ signed by UNKNOWN key ${realFp || '?'} — not in your keychain/contacts`;
+  return by + addresseeNote(result.signedTo, openerFps);
+}
+
+// v1.4 (§4.5): the signature covers `to`, the key recipients the signer
+// addressed. The access map is not covered by it, and header_hash is
+// unkeyed, so anyone holding the cell can add an entry for someone else: the
+// signature still verifies. Without this check a forwarded or re-addressed
+// cell reads as "signed by Alice" to a person Alice never sent it to.
+function addresseeNote(signedTo, openerFps) {
+  if (!Array.isArray(signedTo)) return '';   // ≤ v1.3: the signature names no recipients
+  const n = signedTo.length;
+  const listed = `the signer addressed it to ${n} key${n === 1 ? '' : 's'}`;
+  if (!openerFps?.length)
+    return ` · ℹ️ opened without a key: ${listed}, and the signature does not cover passphrase or YubiKey entries, so it cannot confirm this cell was meant for you`;
+  const missing = openerFps.filter(f => !signedTo.includes(f));
+  if (!missing.length) return '';
+  return ` · ⚠️ NOT addressed to your key ${missing.join(', ')}: ${listed}, not to yours. It may have been forwarded or re-addressed after signing`;
+}
+
+// The public key of a PKCS8 P-256 private key, so the opener's fingerprint
+// comes from the key itself and not from a label in the key file.
+async function spkiOfPkcs8(pkcs8) {
+  const k = await crypto.subtle.importKey('pkcs8', pkcs8, { name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const { kty, crv, x, y } = await crypto.subtle.exportKey('jwk', k);
+  const pub = await crypto.subtle.importKey('jwk', { kty, crv, x, y }, { name: 'ECDH', namedCurve: 'P-256' }, true, []);
+  return toB64(new Uint8Array(await crypto.subtle.exportKey('spki', pub)));
 }
 
 async function openWithKeychain() {
@@ -734,6 +765,7 @@ async function openWithKeychain() {
   if (!keys.length) { showAlert('open-status', 'No ECDH private keys in keychain.', 'error'); return; }
   showAlert('open-status', '🔑 Trying keychain keys…', 'info');
   let usedKey = null;  // v1.4 entries carry no label, so remember which of our keys unwrapped
+  const usedKeys = new Set();  // every key that unwrapped (several, for a quorum)
   try {
     const result = await cellOpen(_openCell, async (r) => {
       if (r.method !== 'ecdh-p256') return null;
@@ -743,12 +775,14 @@ async function openWithKeychain() {
           const priv = await kcLoadPrivKey(key);
           const cek = await ecdhUnwrapCek(r.wrapped_cek, priv);
           usedKey = key;
+          usedKeys.add(key);
           return cek;
         } catch { continue; }
       }
       return null;
     });
-    const sigNote = await sigNoteFor(result);
+    const openerFps = await Promise.all([...usedKeys].map(k => k.spki ? fp(k.spki) : spkiOfPkcs8(fromB64(k.pkcs8)).then(fp)));
+    const sigNote = await sigNoteFor(result, openerFps);
     showAlert('open-status', `✅ Decrypted with "${result.usedRecipient?.label || usedKey?.label || 'keychain key'}"${sigNote}${savedNote(result)}`, 'success');
     dlBytes(result.bytes, result.filename, result.contentType);
     _showReencrypt(result);
@@ -846,28 +880,29 @@ async function openConfirmKeyFile() {
   try {
     const file = inp.files[0];
     const isPem = file.name.toLowerCase().endsWith('.pem');
-    let priv, label, fp_key;
+    let priv, label, fp_key, pkcs8;
     if (isPem) {
       const text = await file.text();
       if (!text.includes('-----BEGIN')) throw new Error('Not a valid PEM file');
-      priv = await crypto.subtle.importKey('pkcs8', parsePemKey(text),
-        { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+      pkcs8 = parsePemKey(text);
       label = file.name;
     } else {
       const data = JSON.parse(await file.text());
       if (!data.pkcs8) throw new Error('No private key in this file');
-      priv = await crypto.subtle.importKey('pkcs8', fromB64(data.pkcs8),
-        { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+      pkcs8 = fromB64(data.pkcs8);
       label = data.label || 'key file';
       fp_key = data.fingerprint;
     }
+    priv = await crypto.subtle.importKey('pkcs8', pkcs8,
+      { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+    const openerFp = await fp(await spkiOfPkcs8(pkcs8));
     const result = await cellOpen(_openCell, async (r) => {
       if (r.method !== 'ecdh-p256') return null;
       if (fp_key && r.fingerprint && r.fingerprint !== fp_key) return null;
       return ecdhUnwrapCek(r.wrapped_cek, priv);
     });
     closeModal();
-    const sigNote = await sigNoteFor(result);
+    const sigNote = await sigNoteFor(result, [openerFp]);
     showAlert('open-status', `✅ Decrypted with "${label}"${sigNote}${savedNote(result)}`, 'success');
     dlBytes(result.bytes, result.filename, result.contentType);
     _showReencrypt(result);

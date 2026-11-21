@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
 import time
 from dataclasses import dataclass, field
@@ -379,8 +380,18 @@ def verify_cell(cell: dict, *, expected_signer: str | None = None) -> VerifyResu
     ``header_sig`` entirely and the result is indistinguishable from a cell that
     was never signed. Pass ``expected_signer`` (a fingerprint learned out of
     band) whenever authorship matters.
+
+    A v1.4 signature lives inside the ciphertext (§4.5), where no key-less check
+    can reach it. ``expected_signer`` on a v1.4 cell therefore raises
+    :class:`.SignatureError` rather than returning ``signed=False`` as if the
+    requirement had been met: use ``cell_open(..., expected_signer=...)``.
     """
     version = _version_of(cell)
+    if expected_signer is not None and version in INNER_SIG_VERSIONS:
+        raise SignatureError(
+            f"a v{version} cell carries its signature inside the ciphertext, so verify_cell "
+            f"cannot check it against {expected_signer} — use cell_open(..., expected_signer=...)"
+        )
     header = cell.get("header")
     if not isinstance(header, dict):
         raise MalformedCellError("malformed cell — missing header")
@@ -424,7 +435,7 @@ def verify_cell(cell: dict, *, expected_signer: str | None = None) -> VerifyResu
         # which the signer writes about themselves and can say anything.
         signer_fp = crypto.fingerprint(spki_der)
 
-    if expected_signer is not None and version not in INNER_SIG_VERSIONS:
+    if expected_signer is not None:
         if not signed:
             raise SignatureError(
                 f"expected a cell signed by {expected_signer}, but it carries no signature "
@@ -510,7 +521,7 @@ def _cell_open(
     not about the recipient's permission (§8.2).
     """
     version = _version_of(cell)
-    is_legacy = not cell.get("version") and bool(cell.get("cd_version"))
+    is_legacy = _is_legacy(cell)
     now = int(time.time()) if now is None else now
 
     # ── Step 0: advisory gates. Cheapest of all, and they need nothing but the clock.
@@ -524,7 +535,11 @@ def _cell_open(
     # ── Steps 1-3: integrity and authenticity, before any key material is touched.
     verified = None
     if not is_legacy:
-        verified = verify_cell(cell, expected_signer=expected_signer)
+        # ≤v1.3: the signer is checked here, before any key work (§10). v1.4: it
+        # is inside the ciphertext, and the check at the end of this function
+        # enforces it.
+        verified = verify_cell(
+            cell, expected_signer=None if version in INNER_SIG_VERSIONS else expected_signer)
     elif expected_signer is not None:
         raise SignatureError("legacy v2.x cells carry no signature to check")
 
@@ -742,11 +757,29 @@ def _default_unwrapper(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+#: A pre-spec v2.x cell (§12) is the ONLY kind read without a ``version``.
+#: Neither field is authenticated, so the test is exact. It was once "no
+#: version, any cd_version": a signed v1.4 cell relabelled cd_version "1.4"
+#: then took the legacy path in the reference opener (the GCM tag still passed
+#: under the real v1.4 AAD), skipping every integrity and signature check.
+_LEGACY_CD_VERSION = re.compile(r"2\.[0-9]+")
+
+
+def _is_legacy(cell: dict) -> bool:
+    cd = cell.get("cd_version")
+    return (cell.get("version") is None and isinstance(cd, str)
+            and _LEGACY_CD_VERSION.fullmatch(cd) is not None)
+
+
 def _version_of(cell: dict) -> str:
     version = cell.get("version")
     if version is None:
-        if cell.get("cd_version"):
-            return str(cell["cd_version"])  # legacy v2.x (§12)
+        if _is_legacy(cell):
+            return cell["cd_version"]  # legacy v2.x (§12)
+        if cell.get("cd_version") is not None:
+            raise UnsupportedVersionError(
+                f'cd_version "{cell["cd_version"]}" is not a legacy (2.x) version, '
+                "and the cell has no version field")
         raise UnsupportedVersionError("cell has no version field")
     if version not in SUPPORTED_VERSIONS:
         raise UnsupportedVersionError(

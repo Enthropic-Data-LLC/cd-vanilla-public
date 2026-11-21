@@ -48,6 +48,9 @@ class TestCli(unittest.TestCase):
         self.assertIn("header_hash    ok", output)
         # v1.4: the signature is inside the ciphertext; verify cannot see it
         self.assertIn("signature      inside the encrypted payload", output)
+        # …so a required signer is refused here, never passed: `open` checks it.
+        code, _ = self.run_cli("verify", str(cell), "--expect-signer", "deadbeefdeadbeef")
+        self.assertEqual(code, 2)
 
         destination = self.tmp / "out"
         code, output = self.run_cli(
@@ -56,6 +59,42 @@ class TestCli(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("signed by key", output)
         self.assertEqual((destination / "report.txt").read_text(), "confidential contents")
+
+    def test_open_warns_when_the_key_is_not_one_the_signer_addressed(self):
+        # §4.5: anyone holding the cell can add an access-map entry; the
+        # signature still verifies, so the opener has to compare `to` itself.
+        alice, bob, carol = self.keygen("Alice"), self.keygen("Bob"), self.keygen("Carol")
+        cell_path = self.tmp / "signed.cell"
+        code, _ = self.run_cli("seal", str(self.source), "--to", f"{alice}.cdpub", "--to", f"{carol}.cdpub",
+                               "--sign", f"{bob}.cdkey", "--out", str(cell_path))
+        self.assertEqual(code, 0)
+        code, output = self.run_cli("open", str(cell_path), "--key", f"{alice}.cdkey",
+                                    "--out", f"{self.tmp}/a/")
+        self.assertEqual(code, 0)
+        self.assertNotIn("warning", output)
+
+        # A cell signed for Alice alone, with an entry for Carol added afterwards
+        # by someone who could open it. Nothing the signature covers changes.
+        forwarded = self.tmp / "forwarded.cell"
+        code, _ = self.run_cli("seal", str(self.source), "--to", f"{alice}.cdpub",
+                               "--sign", f"{bob}.cdkey", "--out", str(forwarded))
+        self.assertEqual(code, 0)
+        from cellular_defense import KeyRecord, crypto
+        from cellular_defense.cell import serialize_header
+        from cellular_defense.codec import b64encode
+        cell = json.loads(forwarded.read_text())
+        alice_key = KeyRecord.from_cdkey(json.loads(Path(f"{alice}.cdkey").read_text()))
+        carol_pub = json.loads(Path(f"{carol}.cdpub").read_text())["spki"]
+        cek = crypto.ecdh_unwrap_cek(cell["header"]["access_map"][0]["wrapped_cek"], alice_key.private)
+        cell["header"]["access_map"].append(
+            {"method": "ecdh-p256", "wrapped_cek": crypto.ecdh_wrap_cek(cek, carol_pub)})
+        cell["header_hash"] = b64encode(crypto.sha256(serialize_header(cell["header"], cell["version"])))
+        forwarded.write_text(json.dumps(cell))
+        code, output = self.run_cli("open", str(forwarded), "--key", f"{carol}.cdkey",
+                                    "--out", f"{self.tmp}/c/")
+        self.assertEqual(code, 0)
+        self.assertIn("signed by key", output)
+        self.assertIn("warning        none of your keys is among them", output)
 
     def test_private_key_file_is_not_world_readable(self):
         stem = self.keygen()

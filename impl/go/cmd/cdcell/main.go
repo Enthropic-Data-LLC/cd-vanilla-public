@@ -273,6 +273,11 @@ func cmdVerify(args []string) error {
 	} else {
 		fmt.Printf("payload_hash   absent\n")
 	}
+	if cell.InnerSigVersions[result.Version] {
+		// §4.5: who signed is not visible here, by design.
+		fmt.Println("signature      inside the encrypted payload — `open` verifies it")
+		return nil
+	}
 	if result.Signed {
 		fmt.Printf("signature      valid, by key %s\n", result.SignerFingerprint)
 		fmt.Printf("               (claims to be %q — self-asserted, check the fingerprint\n", result.ClaimedSigner)
@@ -420,6 +425,9 @@ func cmdOpen(args []string) error {
 	// Who signed comes first, before any text the sender chose.
 	if result.Signed {
 		fmt.Printf("signed by key %s\n", result.SignerFingerprint)
+		if cell.InnerSigVersions[c.GetString("version")] {
+			printAddressees(result.SignedTo, opts.Keys)
+		}
 	} else {
 		fmt.Println("not signed     nothing in this cell says who sent it")
 	}
@@ -430,6 +438,29 @@ func cmdOpen(args []string) error {
 		}
 	}
 	return nil
+}
+
+// printAddressees reports who a v1.4 signature names (§4.5). The signature does
+// not cover the access map, so a cell can be re-addressed to someone the signer
+// never named.
+func printAddressees(signedTo []string, keys []*cell.KeyRecord) {
+	listed := strings.Join(signedTo, ", ")
+	if listed == "" {
+		listed = "(no key recipients)"
+	}
+	fmt.Printf("signed for     %s\n", shown(listed))
+	if len(keys) == 0 {
+		fmt.Println("note           opened without a key: the signature names key recipients only, so it cannot confirm this cell was meant for you")
+		return
+	}
+	for _, k := range keys {
+		for _, f := range signedTo {
+			if k.Fingerprint() == f {
+				return
+			}
+		}
+	}
+	fmt.Println("warning        none of your keys is among them: this cell may have been forwarded or re-addressed after signing")
 }
 
 // ── Sender-chosen text ───────────────────────────────────────────────────────
