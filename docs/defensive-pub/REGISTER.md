@@ -256,6 +256,10 @@ command-line tools now say when a signed v1.4 cell was opened by a key the signe
 did not address (§4.5). Vectors `reject-v14-relabelled-legacy` and
 `reject-legacy-version-not-string` pin the version test.
 
+`docs/SPEC.md` is anchored and stays as written, so its §12 still says any
+`cd_version` without a `version` is legacy. The exact test above governs, and
+`reject-v14-relabelled-legacy` pins it.
+
 Superseded root proofs, not to be cited: `1c1b8371…` (the 2026-10-31 bytes; its
 pending proof is in git history at commit `3453f29`), `191ed2b0…` (the
 2026-11-05 bytes; at commit `412e886`), `efa0a4f8…` (the first 2026-11-08

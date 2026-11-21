@@ -531,7 +531,9 @@ def build_derived_2026_11_21() -> None:
                     "filename and type added",
         open_with={"keys": ["alice"]}, reject_reason="unsupported-version", reject_at_step=0,
         notes="cd_version never stands in for version. An opener that treats this as legacy and "
-              "still applies the v1.4 AAD accepts the editor's filename and skips the signature.")
+              "still applies the v1.4 AAD accepts the editor's filename and skips the signature. "
+              "This narrows §12's legacy-detection sentence, which is kept as anchored: a cell is "
+              "legacy only when version is absent or null and cd_version matches ^2\\.[0-9]+$.")
 
     c = committed("open", "legacy-v2-no-hkdf")
     c["version"] = 2
